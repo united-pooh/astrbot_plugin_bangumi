@@ -133,7 +133,7 @@ def _repeat_summary_until_growth_required(seed_text: str) -> str:
     probe_draw = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
     summary_font = get_font(45)
     text = seed_text
-    for _ in range(16):
+    for _ in range(128):
         _, full_summary_height = measure_text_block(
             probe_draw,
             text,
@@ -142,9 +142,9 @@ def _repeat_summary_until_growth_required(seed_text: str) -> str:
             max_lines=None,
             line_spacing=24,
         )
-        if full_summary_height > 900:
+        if full_summary_height > 660:
             return text
-        text += seed_text
+        text = f"{text} {seed_text}"
     pytest.fail("expected generated summary to require card growth")
 
 
