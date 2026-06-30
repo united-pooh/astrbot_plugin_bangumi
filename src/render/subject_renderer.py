@@ -21,6 +21,7 @@ from ..domain.contracts import (
 from ..domain.types import SubjectType
 from .base_renderer import BaseRenderer
 from .pillow_utils import (
+    FontType,
     add_shadow,
     draw_centered_text,
     draw_pill,
@@ -31,6 +32,7 @@ from .pillow_utils import (
     image_to_base64,
     load_image_source,
     measure_text,
+    measure_text_block,
     select_image_url,
 )
 from .pillow_utils import (
@@ -503,6 +505,83 @@ def _build_subject_summary(data: RenderData) -> str:
     return re.sub(r"\s+", " ", summary).strip()
 
 
+def _measure_subject_tag_pill(
+    draw: ImageDraw.ImageDraw,
+    tag: str,
+    tag_font: FontType,
+    *,
+    tag_x: int,
+    tag_right: int,
+    tag_padding_x: int,
+) -> tuple[str, int]:
+    available_text_width = max(48, tag_right - tag_x - tag_padding_x * 2)
+    visible_tag = ellipsize_text(draw, tag, tag_font, available_text_width)
+    pill_width = measure_text(draw, visible_tag, tag_font)[0] + tag_padding_x * 2
+    return visible_tag, pill_width
+
+
+def _layout_subject_tag_pill(
+    draw: ImageDraw.ImageDraw,
+    tag: str,
+    tag_font: FontType,
+    *,
+    right_x: int,
+    tag_x: int,
+    tag_right: int,
+    tag_padding_x: int,
+) -> tuple[int, str, int, bool]:
+    visible_tag, pill_width = _measure_subject_tag_pill(
+        draw,
+        tag,
+        tag_font,
+        tag_x=tag_x,
+        tag_right=tag_right,
+        tag_padding_x=tag_padding_x,
+    )
+    if tag_x > right_x and tag_x + pill_width > tag_right:
+        tag_x = right_x
+        visible_tag, pill_width = _measure_subject_tag_pill(
+            draw,
+            tag,
+            tag_font,
+            tag_x=tag_x,
+            tag_right=tag_right,
+            tag_padding_x=tag_padding_x,
+        )
+        return tag_x, visible_tag, pill_width, True
+    return tag_x, visible_tag, pill_width, False
+
+
+def _measure_subject_tag_rows(
+    draw: ImageDraw.ImageDraw,
+    tags: list[str],
+    tag_font: FontType,
+    *,
+    right_x: int,
+    tag_right: int,
+    tag_padding_x: int,
+    tag_gap: int,
+) -> int:
+    tag_x = right_x
+    tag_rows = 1
+    for tag in tags:
+        tag_x, _, pill_width, wrapped = _layout_subject_tag_pill(
+            draw,
+            tag,
+            tag_font,
+            right_x=right_x,
+            tag_x=tag_x,
+            tag_right=tag_right,
+            tag_padding_x=tag_padding_x,
+        )
+        if wrapped:
+            tag_rows += 1
+        if tag_rows > 2:
+            return 2
+        tag_x += pill_width + tag_gap
+    return tag_rows
+
+
 def _draw_subject_card_image(
     data: RenderData,
     cover_image: Image.Image | None,
@@ -523,7 +602,44 @@ def _draw_subject_card_image(
     )
     episode_y_shift = max(0, episode_rows - 1) * 96
 
-    width, height = 2400, 1674 + episode_y_shift
+    width = 2400
+    right_x = _SUBJECT_RIGHT_X
+    tag_font = get_font(36, bold=True)
+    summary_font = get_font(45)
+    probe_draw = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
+    tags = _extract_tags(data)
+    tag_right = 2175
+    tag_gap = 24
+    tag_padding_x = 36
+    tag_rows = _measure_subject_tag_rows(
+        probe_draw,
+        tags,
+        tag_font,
+        right_x=right_x,
+        tag_right=tag_right,
+        tag_padding_x=tag_padding_x,
+        tag_gap=tag_gap,
+    )
+    summary_top = 628 if tag_rows == 1 else 704
+    summary_text = _build_subject_summary(data)
+    _, full_summary_height = measure_text_block(
+        probe_draw,
+        summary_text,
+        summary_font,
+        2300 - right_x,
+        max_lines=None,
+        line_spacing=24,
+    )
+    _, three_line_summary_height = measure_text_block(
+        probe_draw,
+        summary_text,
+        summary_font,
+        2300 - right_x,
+        max_lines=3,
+        line_spacing=24,
+    )
+    summary_extra_height = max(0, full_summary_height - three_line_summary_height)
+    height = 1674 + episode_y_shift + summary_extra_height
     primary_title, secondary_title = _extract_subject_titles(data)
 
     canvas = Image.new("RGBA", (width, height), style.surface)
@@ -608,9 +724,7 @@ def _draw_subject_card_image(
     score_font = get_font(108, bold=True)
     star_font = get_font(78, bold=True)
     meta_font = get_font(39, bold=True)
-    tag_font = get_font(36, bold=True)
     summary_label_font = get_font(42, bold=True)
-    summary_font = get_font(45)
     footer_font = get_font(39)
     small_font = get_font(30, bold=True)
 
@@ -640,8 +754,6 @@ def _draw_subject_card_image(
             font=sub_font,
             fill=(252, 252, 252, 255),
         )
-
-    right_x = _SUBJECT_RIGHT_X
 
     draw_text_block(
         draw,
@@ -698,25 +810,26 @@ def _draw_subject_card_image(
     draw.rounded_rectangle(count_box, radius=37, fill=style.panel)
     draw_centered_text(draw, count_box, count_label, meta_font, style.muted)
 
-    tags = _extract_tags(data)
     tag_x = right_x
     tag_y = 474
-    tag_rows = 1
-    tag_right = 2175
-    tag_gap = 24
-    tag_padding_x = 36
     tag_padding_y = 16
+    rendered_tag_rows = 1
     for tag in tags:
-        preview_width = measure_text(draw, tag, tag_font)[0] + tag_padding_x * 2
-        if tag_x > right_x and tag_x + preview_width > tag_right:
-            tag_x = right_x
+        tag_x, visible_tag, _, wrapped = _layout_subject_tag_pill(
+            draw,
+            tag,
+            tag_font,
+            right_x=right_x,
+            tag_x=tag_x,
+            tag_right=tag_right,
+            tag_padding_x=tag_padding_x,
+        )
+        if wrapped:
             tag_y += 78
-            tag_rows += 1
-        if tag_rows > 2:
+            rendered_tag_rows += 1
+        if rendered_tag_rows > 2:
             break
 
-        available_text_width = max(48, tag_right - tag_x - tag_padding_x * 2)
-        visible_tag = ellipsize_text(draw, tag, tag_font, available_text_width)
         pill_width = draw_pill(
             draw,
             (tag_x, tag_y),
@@ -730,7 +843,6 @@ def _draw_subject_card_image(
         )
         tag_x += pill_width + tag_gap
 
-    summary_top = 628 if tag_rows == 1 else 704
     for x in range(right_x, 2325, 22):
         draw.line(
             (x, summary_top, min(x + 10, 2325), summary_top),
@@ -746,10 +858,10 @@ def _draw_subject_card_image(
     draw_text_block(
         draw,
         (right_x, summary_top + 164, 2300, 1138),
-        _build_subject_summary(data),
+        summary_text,
         summary_font,
         style.body,
-        max_lines=3,
+        max_lines=None,
         line_spacing=24,
     )
 
@@ -847,7 +959,7 @@ def _draw_subject_card_image(
                 fill=style.muted,
             )
 
-    footer_y = 1495 + episode_y_shift
+    footer_y = 1495 + episode_y_shift + summary_extra_height
     date_text = _stringify_value(data.get("date"))
     platform = _stringify_value(data.get("platform"))
     if date_text:

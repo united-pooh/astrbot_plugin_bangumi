@@ -13,8 +13,10 @@ from astrbot_plugin_bangumi.src.render.pillow_utils import (
     ellipsize_text,
     get_font,
     is_visually_blank,
+    line_height,
     load_image_source,
     measure_text,
+    measure_text_block,
     wrap_text,
 )
 
@@ -35,6 +37,79 @@ def test_wrap_text_breaks_long_labels_into_multiple_lines() -> None:
     assert len(lines) >= 2
     assert all(measure_text(draw, line, font)[0] <= 140 for line in lines)
     assert all(line for line in lines)
+
+
+def test_wrap_text_prefers_word_boundaries_for_space_delimited_text() -> None:
+    draw = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
+    font = get_font(24)
+    text = "nearby classmates share stories after school"
+    max_width = measure_text(draw, "classmates", font)[0] + 2
+
+    lines = wrap_text(draw, text, font, max_width=max_width, max_lines=None)
+
+    assert len(lines) > 1
+    assert "classmates" in lines
+    assert [word for line in lines for word in line.split()] == text.split()
+    assert all(measure_text(draw, line, font)[0] <= max_width for line in lines)
+
+
+def test_wrap_text_splits_no_space_cjk_text_by_character() -> None:
+    draw = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
+    font = get_font(24)
+    text = "これはとても長い紹介文です"
+    max_width = measure_text(draw, "これはと", font)[0]
+
+    lines = wrap_text(draw, text, font, max_width=max_width, max_lines=None)
+
+    assert len(lines) > 1
+    assert "".join(lines) == text
+    assert all(measure_text(draw, line, font)[0] <= max_width for line in lines)
+
+
+def test_wrap_text_without_max_lines_keeps_all_wrapped_lines() -> None:
+    draw = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
+    font = get_font(24)
+    text = (
+        "Long summaries should keep rendering after the historical third line "
+        "without inserting a truncation marker"
+    )
+
+    limited_lines = wrap_text(draw, text, font, max_width=150, max_lines=2)
+    full_lines = wrap_text(draw, text, font, max_width=150, max_lines=None)
+
+    assert len(full_lines) > len(limited_lines)
+    assert limited_lines[-1].endswith("...")
+    assert not any(line.endswith("...") for line in full_lines)
+    assert all(measure_text(draw, line, font)[0] <= 150 for line in full_lines)
+
+
+def test_measure_text_block_uses_wrapped_line_height_and_spacing() -> None:
+    draw = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
+    font = get_font(24)
+    text = "Measurement should stay tied to the same wrapping path as drawing."
+
+    lines, height = measure_text_block(
+        draw,
+        text,
+        font,
+        145,
+        max_lines=None,
+        line_spacing=11,
+    )
+
+    assert len(lines) > 2
+    assert height == len(lines) * line_height(draw, font) + (len(lines) - 1) * 11
+
+    limited_lines, limited_height = measure_text_block(
+        draw,
+        text,
+        font,
+        145,
+        max_lines=2,
+        line_spacing=11,
+    )
+    assert len(limited_lines) == 2
+    assert limited_height == 2 * line_height(draw, font) + 11
 
 
 def test_ellipsize_text_shortens_overlong_copy() -> None:

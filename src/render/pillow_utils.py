@@ -275,36 +275,68 @@ def wrap_text(
     text: str,
     font: FontType,
     max_width: int,
-    max_lines: int,
+    max_lines: int | None,
 ) -> list[str]:
     normalized = re.sub(r"\s+", " ", text.replace("\r", " ").replace("\n", " ")).strip()
     if not normalized:
         return []
+    if max_lines is not None and max_lines <= 0:
+        return []
+
+    def split_token(token: str) -> list[str]:
+        parts: list[str] = []
+        current_part = ""
+        for char in token:
+            candidate = f"{current_part}{char}"
+            if current_part and measure_text(draw, candidate, font)[0] > max_width:
+                parts.append(current_part)
+                current_part = char
+            else:
+                current_part = candidate
+        if current_part:
+            parts.append(current_part)
+        return parts
+
+    def ellipsize_truncated_line(line: str) -> str:
+        ellipsis = "..."
+        candidate = line.rstrip()
+        while candidate:
+            merged = f"{candidate}{ellipsis}"
+            if measure_text(draw, merged, font)[0] <= max_width:
+                return merged
+            candidate = candidate[:-1].rstrip()
+        return ellipsis
 
     lines: list[str] = []
     current = ""
-    truncated = False
 
-    for char in normalized:
-        candidate = f"{current}{char}"
-        if current and measure_text(draw, candidate, font)[0] > max_width:
-            lines.append(current)
-            current = char
-            if len(lines) >= max_lines:
-                truncated = True
-                break
-        else:
+    for token in normalized.split(" "):
+        candidate = token if not current else f"{current} {token}"
+        if measure_text(draw, candidate, font)[0] <= max_width:
             current = candidate
+            continue
 
-    if not truncated and current:
+        if current:
+            lines.append(current)
+            current = ""
+
+        if measure_text(draw, token, font)[0] <= max_width:
+            current = token
+            continue
+
+        token_parts = split_token(token)
+        if token_parts:
+            lines.extend(token_parts[:-1])
+            current = token_parts[-1]
+
+    if current:
         lines.append(current)
-        if len(lines) > max_lines:
-            truncated = True
-            lines = lines[:max_lines]
 
-    if truncated and lines:
-        lines[-1] = ellipsize_text(draw, lines[-1], font, max_width)
-
+    if max_lines is None:
+        return lines
+    if len(lines) > max_lines:
+        lines = lines[:max_lines]
+        lines[-1] = ellipsize_truncated_line(lines[-1])
     return lines[:max_lines]
 
 
@@ -327,6 +359,24 @@ def ellipsize_text(
     return ellipsis
 
 
+def measure_text_block(
+    draw: ImageDraw.ImageDraw,
+    text: str,
+    font: FontType,
+    max_width: int,
+    *,
+    max_lines: int | None,
+    line_spacing: int = 8,
+) -> tuple[list[str], int]:
+    lines = wrap_text(draw, text, font, max_width, max_lines)
+    if not lines:
+        return [], 0
+
+    text_line_height = line_height(draw, font)
+    height = len(lines) * text_line_height + (len(lines) - 1) * line_spacing
+    return lines, height
+
+
 def draw_text_block(
     draw: ImageDraw.ImageDraw,
     box: Rect,
@@ -334,10 +384,17 @@ def draw_text_block(
     font: FontType,
     fill: RGBColor | RGBAColor,
     *,
-    max_lines: int,
+    max_lines: int | None,
     line_spacing: int = 8,
 ) -> int:
-    lines = wrap_text(draw, text, font, box[2] - box[0], max_lines)
+    lines, block_height = measure_text_block(
+        draw,
+        text,
+        font,
+        box[2] - box[0],
+        max_lines=max_lines,
+        line_spacing=line_spacing,
+    )
     text_line_height = line_height(draw, font)
     current_y = box[1]
 
@@ -345,9 +402,7 @@ def draw_text_block(
         draw.text((box[0], current_y), line, font=font, fill=fill)
         current_y += text_line_height + line_spacing
 
-    if not lines:
-        return 0
-    return current_y - box[1] - line_spacing
+    return block_height
 
 
 def draw_pill(

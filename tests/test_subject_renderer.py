@@ -3,10 +3,11 @@ import io
 from unittest.mock import AsyncMock
 
 import pytest
-from PIL import Image, ImageChops
+from PIL import Image, ImageChops, ImageDraw
 
 from astrbot_plugin_bangumi.src.domain import EPISODE_CARD_VARIANTS
 from astrbot_plugin_bangumi.src.render import SubjectRenderer
+from astrbot_plugin_bangumi.src.render.pillow_utils import get_font, measure_text_block
 from astrbot_plugin_bangumi.src.render.subject_renderer import (
     _SUBJECT_CARD_STYLES,
     _SUBJECT_COVER_BOX,
@@ -14,6 +15,8 @@ from astrbot_plugin_bangumi.src.render.subject_renderer import (
     _SUBJECT_RIGHT_X,
     _SUBJECT_TITLE_PANEL_BOTTOM,
     _SUBJECT_TOP_ORB_BOX,
+    _extract_tags,
+    _measure_subject_tag_rows,
 )
 from astrbot_plugin_bangumi.tests.render.image_assertions import assert_png_image
 
@@ -73,6 +76,59 @@ def build_subject_data() -> dict[str, object]:
     }
 
 
+def _decode_png_payload(payload: str) -> Image.Image:
+    return Image.open(io.BytesIO(base64.b64decode(payload))).convert("RGBA")
+
+
+def _is_near_color(
+    pixel: tuple[int, int, int, int],
+    target: tuple[int, int, int, int],
+    *,
+    tolerance: int = 18,
+) -> bool:
+    return pixel[3] >= 180 and all(
+        abs(pixel[index] - target[index]) <= tolerance for index in range(3)
+    )
+
+
+def _assert_summary_continues_below_legacy_three_lines(
+    image: Image.Image,
+    subject_data: dict[str, object],
+    *,
+    variant: str,
+) -> None:
+    probe_draw = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
+    tag_rows = _measure_subject_tag_rows(
+        probe_draw,
+        _extract_tags(subject_data),
+        get_font(36, bold=True),
+        right_x=_SUBJECT_RIGHT_X,
+        tag_right=2175,
+        tag_padding_x=36,
+        tag_gap=24,
+    )
+    summary_top = 628 if tag_rows == 1 else 704
+    summary_y = summary_top + 164
+    _, legacy_three_line_height = measure_text_block(
+        probe_draw,
+        str(subject_data["summary"]),
+        get_font(45),
+        2300 - _SUBJECT_RIGHT_X,
+        max_lines=3,
+        line_spacing=24,
+    )
+    scan_top = summary_y + legacy_three_line_height + 1
+    scan_bottom = min(image.height - 160, scan_top + 360)
+    body_color = _SUBJECT_CARD_STYLES[variant].body
+
+    assert scan_bottom > scan_top
+    for y in range(scan_top, scan_bottom):
+        for x in range(_SUBJECT_RIGHT_X, 2300):
+            if _is_near_color(image.getpixel((x, y)), body_color):
+                return
+    pytest.fail("expected summary body pixels below the legacy three-line cutoff")
+
+
 @pytest.mark.asyncio
 async def test_render_subject_card_pillow_returns_base64() -> None:
     renderer = SubjectRenderer(render_mode="pillow")
@@ -81,6 +137,87 @@ async def test_render_subject_card_pillow_returns_base64() -> None:
 
     assert base64_image is not None
     assert_png_image(base64_image, (2400, 1674), require_non_blank=True)
+
+
+def test_measure_subject_tag_rows_uses_ellipsized_tag_width() -> None:
+    probe_draw = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
+    tags = ["恋爱", "超长标签" * 40]
+
+    tag_rows = _measure_subject_tag_rows(
+        probe_draw,
+        tags,
+        get_font(36, bold=True),
+        right_x=_SUBJECT_RIGHT_X,
+        tag_right=2175,
+        tag_padding_x=36,
+        tag_gap=24,
+    )
+
+    assert tag_rows == 1
+
+
+@pytest.mark.asyncio
+async def test_render_subject_card_pillow_long_tag_keeps_short_summary_layout() -> None:
+    renderer = SubjectRenderer(render_mode="pillow")
+    subject_data = build_subject_data()
+    subject_data["tags"] = [
+        {"name": "恋爱", "count": 1356},
+        {"name": "超长标签" * 40, "count": 1071},
+    ]
+
+    base64_image = await renderer.render_subject_card(subject_data)
+
+    assert base64_image is not None
+    assert_png_image(base64_image, (2400, 1674), require_non_blank=True)
+
+
+@pytest.mark.asyncio
+async def test_render_subject_card_pillow_grows_for_long_japanese_summary() -> None:
+    renderer = SubjectRenderer(render_mode="pillow")
+    subject_data = build_subject_data()
+    subject_data["summary"] = (
+        "幼いころに見上げた夏祭りの花火をきっかけに、"
+        "離ればなれになった友人たちがもう一度同じ町へ集まり、"
+        "それぞれの後悔と約束を抱えながら少しずつ前へ進んでいく。"
+    ) * 8
+
+    base64_image = await renderer.render_subject_card(subject_data)
+
+    assert base64_image is not None
+    image = _decode_png_payload(base64_image)
+    assert image.width == 2400
+    assert image.height > 1674
+    _assert_summary_continues_below_legacy_three_lines(
+        image,
+        subject_data,
+        variant="cinematic_poster",
+    )
+
+
+@pytest.mark.asyncio
+async def test_render_subject_card_pillow_grows_for_long_english_summary() -> None:
+    renderer = SubjectRenderer(render_mode="pillow")
+    subject_data = build_subject_data()
+    subject_data["summary"] = (
+        "After a quiet coastal town loses its observatory, "
+        "three classmates rebuild the nightly radio club and discover that "
+        "every broadcast changes how they remember the same summer. "
+    ) * 10
+
+    base64_image = await renderer.render_subject_card(
+        subject_data,
+        variant="editorial_digest",
+    )
+
+    assert base64_image is not None
+    image = _decode_png_payload(base64_image)
+    assert image.width == 2400
+    assert image.height > 1674
+    _assert_summary_continues_below_legacy_three_lines(
+        image,
+        subject_data,
+        variant="editorial_digest",
+    )
 
 
 @pytest.mark.asyncio
@@ -108,6 +245,39 @@ async def test_render_subject_card_default_variant_matches_cinematic() -> None:
     )
 
     assert default_image == cinematic_image
+
+
+@pytest.mark.asyncio
+async def test_render_subject_card_rpc_uses_pillow_variant_carrier() -> None:
+    renderer = SubjectRenderer(render_mode="rpc")
+    renderer._render_subject_card_pillow_with_placeholder = AsyncMock(
+        return_value="pillow-b64"
+    )
+    renderer.render = AsyncMock(return_value="rpc-b64")
+
+    payload = await renderer.render_subject_card(
+        build_subject_data(),
+        rpc_url="http://127.0.0.1:3000",
+        variant="pastel_lightbox",
+    )
+
+    assert payload == "rpc-b64"
+    renderer._render_subject_card_pillow_with_placeholder.assert_awaited_once()
+    assert (
+        renderer._render_subject_card_pillow_with_placeholder.await_args.args[1]
+        == "pastel_lightbox"
+    )
+    renderer.render.assert_awaited_once()
+    call = renderer.render.await_args
+    assert call is not None
+    assert call.kwargs["template_path"] == "subject/subject_carrier.html"
+    assert call.kwargs["selector"] == "#subject-card"
+    assert call.kwargs["rpc_url"] == "http://127.0.0.1:3000"
+    render_data = call.kwargs["render_data"]
+    assert render_data["subject_variant"] == "pastel_lightbox"
+    assert render_data["pillow_card_data_uri"].endswith("pillow-b64")
+    assert "width" not in render_data
+    assert "height" not in render_data
 
 
 @pytest.mark.asyncio
