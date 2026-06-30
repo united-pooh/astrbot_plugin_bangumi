@@ -51,6 +51,8 @@ _SUBJECT_FOOTER_HEIGHT = 63
 _SUBJECT_FOOTER_BOTTOM_GAP = 20
 _SUBJECT_SUMMARY_FOOTER_GAP = 72
 _SUBJECT_BOTTOM_PADDING = 116
+_SUBJECT_TAG_START_Y = 494
+_SUBJECT_TAG_ROW_GAP = 88
 _SUBJECT_COVER_BOX = (75, 78, 705, 969)
 _SUBJECT_LEFT_PANEL_RIGHT = _SUBJECT_COVER_BOX[2] + _SUBJECT_COVER_BOX[0]
 _SUBJECT_RIGHT_X = _SUBJECT_LEFT_PANEL_RIGHT + 60
@@ -861,7 +863,7 @@ def _draw_subject_card_image(
     draw_centered_text(draw, count_box, count_label, meta_font, style.muted)
 
     tag_x = right_x
-    tag_y = 474
+    tag_y = _SUBJECT_TAG_START_Y
     tag_padding_y = 16
     rendered_tag_rows = 1
     for tag in tags:
@@ -875,7 +877,7 @@ def _draw_subject_card_image(
             tag_padding_x=tag_padding_x,
         )
         if wrapped:
-            tag_y += 78
+            tag_y += _SUBJECT_TAG_ROW_GAP
             rendered_tag_rows += 1
         if rendered_tag_rows > 2:
             break
