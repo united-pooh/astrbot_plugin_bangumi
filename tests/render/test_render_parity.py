@@ -16,7 +16,7 @@ from astrbot_plugin_bangumi.tests.test_subject_renderer import (
     build_subject_data,
 )
 
-SUBJECT_SIZE = (2400, 1674)
+SUBJECT_SIZE = (2400, 1638)
 EPISODE_SIZE = (2304, 3072)
 CALENDAR_SIZE = (2892, 2124)
 

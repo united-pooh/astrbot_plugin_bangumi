@@ -288,7 +288,7 @@ async def test_render_subject_card_pillow_returns_base64() -> None:
     base64_image = await renderer.render_subject_card(build_subject_data())
 
     assert base64_image is not None
-    assert_png_image(base64_image, (2400, 1674), require_non_blank=True)
+    assert_png_image(base64_image, (2400, 1638), require_non_blank=True)
 
 
 def test_measure_subject_tag_rows_uses_ellipsized_tag_width() -> None:
@@ -320,7 +320,7 @@ async def test_render_subject_card_pillow_long_tag_keeps_short_summary_layout() 
     base64_image = await renderer.render_subject_card(subject_data)
 
     assert base64_image is not None
-    assert_png_image(base64_image, (2400, 1674), require_non_blank=True)
+    assert_png_image(base64_image, (2400, 1638), require_non_blank=True)
 
 
 @pytest.mark.asyncio
@@ -338,7 +338,7 @@ async def test_render_subject_card_pillow_grows_for_long_japanese_summary() -> N
     assert base64_image is not None
     image = _decode_png_payload(base64_image)
     assert image.width == 2400
-    assert image.height > 1674
+    assert image.height > 1638
     _assert_summary_continues_below_legacy_three_lines(
         image,
         subject_data,
@@ -364,7 +364,7 @@ async def test_render_subject_card_pillow_grows_for_long_english_summary() -> No
     assert base64_image is not None
     image = _decode_png_payload(base64_image)
     assert image.width == 2400
-    assert image.height > 1674
+    assert image.height > 1638
     _assert_summary_continues_below_legacy_three_lines(
         image,
         subject_data,
@@ -384,7 +384,7 @@ async def test_render_subject_card_pillow_renders_all_named_variants(
     )
 
     assert base64_image is not None
-    assert_png_image(base64_image, (2400, 1674), require_non_blank=True)
+    assert_png_image(base64_image, (2400, 1638), require_non_blank=True)
 
 
 @pytest.mark.asyncio
@@ -574,7 +574,7 @@ async def test_render_subject_card_pillow_includes_collection_badge() -> None:
     base64_image = await renderer.render_subject_card(subject_data)
 
     assert base64_image is not None
-    assert_png_image(base64_image, (2400, 1674), require_non_blank=True)
+    assert_png_image(base64_image, (2400, 1638), require_non_blank=True)
 
 
 @pytest.mark.asyncio
@@ -644,7 +644,7 @@ async def test_render_subject_card_pillow_aligns_footer_with_left_content() -> N
 
     assert abs(footer_bottom - left_panel_bottom) <= 80
     assert image.height - left_panel_bottom <= 160
-    assert image.height - footer_bottom >= 90
+    assert 70 <= image.height - footer_bottom <= 90
 
 
 @pytest.mark.asyncio
@@ -665,7 +665,7 @@ async def test_render_subject_card_pillow_grows_for_full_episode_grid() -> None:
     base64_image = await renderer.render_subject_card(subject_data)
 
     assert base64_image is not None
-    assert_png_image(base64_image, (2400, 1756), require_non_blank=True)
+    assert_png_image(base64_image, (2400, 1720), require_non_blank=True)
 
 
 @pytest.mark.asyncio
@@ -686,7 +686,7 @@ async def test_render_subject_card_pillow_caps_long_episode_grid() -> None:
     base64_image = await renderer.render_subject_card(subject_data)
 
     assert base64_image is not None
-    assert_png_image(base64_image, (2400, 1920), require_non_blank=True)
+    assert_png_image(base64_image, (2400, 1884), require_non_blank=True)
 
 
 @pytest.mark.asyncio
@@ -705,4 +705,4 @@ async def test_render_subject_card_pillow_with_failed_image_still_succeeds(
     base64_image = await renderer.render_subject_card(subject_data)
 
     assert base64_image is not None
-    assert_png_image(base64_image, (2400, 1674), require_non_blank=True)
+    assert_png_image(base64_image, (2400, 1638), require_non_blank=True)

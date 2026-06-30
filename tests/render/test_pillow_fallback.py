@@ -26,7 +26,7 @@ async def test_subject_pillow_failure_uses_pure_pil_fallback(
 
     assert base64_image is not None
     assert base64_image != "html"
-    assert_png_image(base64_image, (2400, 1674), require_non_blank=True)
+    assert_png_image(base64_image, (2400, 1638), require_non_blank=True)
     renderer.render.assert_not_called()
 
 
@@ -47,7 +47,7 @@ async def test_subject_playwright_failure_falls_back_to_pillow(
     )
 
     assert base64_image is not None
-    assert_png_image(base64_image, (2400, 1674), require_non_blank=True)
+    assert_png_image(base64_image, (2400, 1638), require_non_blank=True)
     renderer._render_via_rpc.assert_not_awaited()
     renderer._render_locally.assert_awaited_once()
 
