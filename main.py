@@ -437,7 +437,7 @@ class BangumiPlugin(Star):  # type: ignore[misc]
                 event,
                 f"当前图片卡片风格: {current} - {label}\n"
                 f"{options}\n"
-                "发送 `/bgm模板 3` 或 `/bgm模板 cinematic_poster` 切换。",
+                "发送 `/bgm模板 1` 或 `/bgm模板 pastel_lightbox` 切换。",
             )
             return
 

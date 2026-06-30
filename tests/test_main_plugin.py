@@ -49,7 +49,7 @@ def test_normalize_episode_card_template_accepts_names_and_order() -> None:
         BangumiPlugin._normalize_episode_card_template("cinematic-poster")
         == "cinematic_poster"
     )
-    assert BangumiPlugin._normalize_episode_card_template("默认") == "cinematic_poster"
+    assert BangumiPlugin._normalize_episode_card_template("默认") == "pastel_lightbox"
     assert BangumiPlugin._normalize_episode_card_template("unknown") is None
 
 
@@ -117,7 +117,7 @@ async def test_result_for_text_keeps_short_plain_text() -> None:
 async def test_result_for_text_renders_long_text_as_image() -> None:
     plugin = BangumiPlugin.__new__(BangumiPlugin)
     plugin.config_manager = MagicMock()
-    plugin.config_manager.get_episode_card_template.return_value = "cinematic_poster"
+    plugin.config_manager.get_episode_card_template.return_value = "pastel_lightbox"
     plugin.config_manager.get_render_server_url.return_value = "rpc"
     plugin.config_manager.get_max_retries.return_value = 1
     plugin.response_renderer = ResponseRenderer.__new__(ResponseRenderer)
@@ -135,7 +135,7 @@ async def test_result_for_text_renders_long_text_as_image() -> None:
 async def test_result_for_text_falls_back_to_plain_text_when_render_fails() -> None:
     plugin = BangumiPlugin.__new__(BangumiPlugin)
     plugin.config_manager = MagicMock()
-    plugin.config_manager.get_episode_card_template.return_value = "cinematic_poster"
+    plugin.config_manager.get_episode_card_template.return_value = "pastel_lightbox"
     plugin.config_manager.get_render_server_url.return_value = "rpc"
     plugin.config_manager.get_max_retries.return_value = 1
     plugin.response_renderer = ResponseRenderer.__new__(ResponseRenderer)
@@ -156,7 +156,7 @@ async def test_result_for_text_falls_back_to_plain_text_when_render_fails() -> N
 async def test_send_text_falls_back_to_plain_text_when_render_fails() -> None:
     plugin = BangumiPlugin.__new__(BangumiPlugin)
     plugin.config_manager = MagicMock()
-    plugin.config_manager.get_episode_card_template.return_value = "cinematic_poster"
+    plugin.config_manager.get_episode_card_template.return_value = "pastel_lightbox"
     plugin.config_manager.get_render_server_url.return_value = "rpc"
     plugin.config_manager.get_max_retries.return_value = 1
     plugin.response_renderer = ResponseRenderer.__new__(ResponseRenderer)
@@ -237,7 +237,7 @@ async def test_today_dispatches_to_search_service() -> None:
 async def test_episode_card_template_command_shows_current_template() -> None:
     plugin = BangumiPlugin.__new__(BangumiPlugin)
     plugin.config_manager = MagicMock()
-    plugin.config_manager.get_episode_card_template.return_value = "cinematic_poster"
+    plugin.config_manager.get_episode_card_template.return_value = "pastel_lightbox"
     event = _event()
 
     results = [
@@ -245,7 +245,7 @@ async def test_episode_card_template_command_shows_current_template() -> None:
     ]
 
     assert len(results) == 1
-    assert "当前图片卡片风格: cinematic_poster" in results[0]
+    assert "当前图片卡片风格: pastel_lightbox" in results[0]
     assert "1. pastel_lightbox" in results[0]
     assert "3. cinematic_poster" in results[0]
     plugin.config_manager.set_episode_card_template.assert_not_called()

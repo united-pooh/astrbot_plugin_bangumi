@@ -52,12 +52,12 @@ def test_get_render_mode_accepts_new_modes_and_legacy_html() -> None:
 
 
 def test_get_episode_card_template_falls_back_to_default() -> None:
-    assert _manager({}).get_episode_card_template() == "cinematic_poster"
+    assert _manager({}).get_episode_card_template() == "pastel_lightbox"
     assert (
         _manager(
             {"episode_card_template": "risograph_zine"}
         ).get_episode_card_template()
-        == "cinematic_poster"
+        == "pastel_lightbox"
     )
 
 

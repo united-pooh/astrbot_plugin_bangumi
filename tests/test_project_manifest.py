@@ -293,7 +293,7 @@ def test_config_schema_exposes_render_mode_options() -> None:
 
     assert schema["render_mode"]["default"] == "pillow"
     assert schema["render_mode"]["options"] == ["pillow", "playwright", "rpc"]
-    assert schema["episode_card_template"]["default"] == "cinematic_poster"
+    assert schema["episode_card_template"]["default"] == "pastel_lightbox"
     assert schema["episode_card_template"]["options"] == [
         "pastel_lightbox",
         "editorial_digest",

@@ -55,8 +55,8 @@
   "episode_card_template": {
     "description": "图片卡片风格",
     "type": "string",
-    "hint": "用于 /bgm 搜索结果、单集更新卡片和长文本响应卡片；1=pastel_lightbox，2=editorial_digest，3=cinematic_poster；默认使用第 3 个海报模板",
-    "default": "cinematic_poster",
+    "hint": "用于 /bgm 搜索结果、单集更新卡片和长文本响应卡片；1=pastel_lightbox，2=editorial_digest，3=cinematic_poster；默认使用第 1 个粉彩模板",
+    "default": "pastel_lightbox",
     "options": ["pastel_lightbox", "editorial_digest", "cinematic_poster"]
   },
   "auto_translate_episode_summary": {

@@ -464,7 +464,7 @@
     >
 {% else %}
 {% set known_variants = ['pastel_lightbox', 'editorial_digest', 'cinematic_poster'] %}
-{% set selected_variant = episode_variant if episode_variant in known_variants else 'cinematic_poster' %}
+{% set selected_variant = episode_variant if episode_variant in known_variants else 'pastel_lightbox' %}
 {% set sort_value = sort if sort is defined else none %}
 {% set ep_value = ep if ep is defined else none %}
 {% set episode_number = sort_value if sort_value is not none and sort_value != '' else ep_value %}

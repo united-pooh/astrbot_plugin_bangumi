@@ -117,7 +117,7 @@ EPISODE_CARD_VARIANTS: tuple[EpisodeCardVariant, ...] = (
     "editorial_digest",
     "cinematic_poster",
 )
-DEFAULT_EPISODE_CARD_VARIANT: EpisodeCardVariant = "cinematic_poster"
+DEFAULT_EPISODE_CARD_VARIANT: EpisodeCardVariant = "pastel_lightbox"
 RenderData: TypeAlias = dict[str, JsonValue]
 MessageResult: TypeAlias = object
 

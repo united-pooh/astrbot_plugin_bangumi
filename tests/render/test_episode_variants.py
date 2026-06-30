@@ -88,7 +88,7 @@ def test_episode_card_variant_names_are_exact() -> None:
         "editorial_digest",
         "cinematic_poster",
     )
-    assert DEFAULT_EPISODE_CARD_VARIANT == "cinematic_poster"
+    assert DEFAULT_EPISODE_CARD_VARIANT == "pastel_lightbox"
 
 
 @pytest.mark.asyncio
@@ -108,17 +108,17 @@ async def test_episode_pillow_renders_all_named_variants(episode: Episode) -> No
 
 
 @pytest.mark.asyncio
-async def test_episode_default_and_none_variant_use_cinematic_poster(
+async def test_episode_default_and_none_variant_use_pastel_lightbox(
     episode: Episode,
 ) -> None:
     renderer = EpisodeRenderer(render_mode="pillow")
 
     default_image = await renderer.render_episode(episode)
     none_image = await renderer.render_episode(episode, variant=None)
-    cinematic_image = await renderer.render_episode(episode, variant="cinematic_poster")
+    pastel_image = await renderer.render_episode(episode, variant="pastel_lightbox")
 
     assert default_image is not None
-    assert default_image == none_image == cinematic_image
+    assert default_image == none_image == pastel_image
 
 
 @pytest.mark.asyncio
@@ -161,7 +161,7 @@ def test_episode_template_generates_all_variant_branches(
 
 
 @pytest.mark.parametrize("variant", [None, "unknown_layout"])
-def test_episode_template_falls_back_to_cinematic_for_missing_or_unknown_variant(
+def test_episode_template_falls_back_to_pastel_for_missing_or_unknown_variant(
     episode: Episode,
     variant: str | None,
 ) -> None:
@@ -174,11 +174,11 @@ def test_episode_template_falls_back_to_cinematic_for_missing_or_unknown_variant
 
     assert 'id="card-container"' in html
     assert 'referrerpolicy="no-referrer"' in html
-    for expected_markup in VARIANT_BRANCH_MARKUP["cinematic_poster"]:
+    for expected_markup in VARIANT_BRANCH_MARKUP["pastel_lightbox"]:
         assert expected_markup in html
     for variant_name in (
-        "pastel_lightbox",
         "editorial_digest",
+        "cinematic_poster",
     ):
         for branch_markup in VARIANT_BRANCH_MARKUP[variant_name]:
             assert branch_markup not in html

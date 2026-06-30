@@ -39,9 +39,18 @@ from .pillow_utils import (
     stringify_value as _stringify_value,
 )
 
-_EPISODE_GRID_COLUMNS = 6
-_MAX_EPISODE_GRID_ROWS = 3
+_EPISODE_GRID_COLUMNS = 7
+_EPISODE_GRID_CELL_SIZE = 72
+_EPISODE_GRID_CELL_GAP = 10
+_MAX_EPISODE_GRID_ROWS = 4
 _MAX_EPISODE_GRID_ITEMS = _EPISODE_GRID_COLUMNS * _MAX_EPISODE_GRID_ROWS
+_SUBJECT_CARD_BASE_HEIGHT = 1674
+_SUBJECT_EPISODE_ROW_SHIFT = _EPISODE_GRID_CELL_SIZE + _EPISODE_GRID_CELL_GAP
+_SUBJECT_SCORE_TABLE_BOTTOM = 1578
+_SUBJECT_FOOTER_HEIGHT = 63
+_SUBJECT_FOOTER_BOTTOM_GAP = 20
+_SUBJECT_SUMMARY_FOOTER_GAP = 72
+_SUBJECT_BOTTOM_PADDING = 116
 _SUBJECT_COVER_BOX = (75, 78, 705, 969)
 _SUBJECT_LEFT_PANEL_RIGHT = _SUBJECT_COVER_BOX[2] + _SUBJECT_COVER_BOX[0]
 _SUBJECT_RIGHT_X = _SUBJECT_LEFT_PANEL_RIGHT + 60
@@ -69,6 +78,17 @@ class SubjectCardStyle:
     side_strip: Color | None
     header_band: Color | None
     top_orb: Color
+
+
+@dataclass(frozen=True)
+class EpisodeGridLayout:
+    columns: int
+    rows: int
+    cell_size: int
+    gap: int
+    font_size: int
+    radius: int
+    y_shift: int
 
 
 _SUBJECT_CARD_STYLES: dict[EpisodeCardVariant, SubjectCardStyle] = {
@@ -127,6 +147,37 @@ _SUBJECT_CARD_STYLES: dict[EpisodeCardVariant, SubjectCardStyle] = {
         top_orb=(245, 196, 164, 150),
     ),
 }
+
+
+def _resolve_episode_grid_layout(visible_count: int) -> EpisodeGridLayout:
+    if visible_count <= 0:
+        return EpisodeGridLayout(
+            columns=_EPISODE_GRID_COLUMNS,
+            rows=0,
+            cell_size=_EPISODE_GRID_CELL_SIZE,
+            gap=_EPISODE_GRID_CELL_GAP,
+            font_size=30,
+            radius=16,
+            y_shift=0,
+        )
+
+    columns = _EPISODE_GRID_COLUMNS
+    cell_size = _EPISODE_GRID_CELL_SIZE
+    gap = _EPISODE_GRID_CELL_GAP
+    font_size = 30
+    radius = 16
+
+    rows = (visible_count + columns - 1) // columns
+    rows = min(rows, _MAX_EPISODE_GRID_ROWS)
+    return EpisodeGridLayout(
+        columns=columns,
+        rows=rows,
+        cell_size=cell_size,
+        gap=gap,
+        font_size=font_size,
+        radius=radius,
+        y_shift=max(0, rows - 1) * _SUBJECT_EPISODE_ROW_SHIFT,
+    )
 
 
 def _draw_left_panel(
@@ -594,13 +645,8 @@ def _draw_subject_card_image(
     if isinstance(raw_episode_list, list):
         episode_items = [item for item in raw_episode_list if isinstance(item, Mapping)]
     visible_episode_items = episode_items[:_MAX_EPISODE_GRID_ITEMS]
-    episode_rows = (
-        (len(visible_episode_items) + _EPISODE_GRID_COLUMNS - 1)
-        // _EPISODE_GRID_COLUMNS
-        if visible_episode_items
-        else 0
-    )
-    episode_y_shift = max(0, episode_rows - 1) * 96
+    episode_grid = _resolve_episode_grid_layout(len(visible_episode_items))
+    episode_y_shift = episode_grid.y_shift
 
     width = 2400
     right_x = _SUBJECT_RIGHT_X
@@ -630,16 +676,20 @@ def _draw_subject_card_image(
         max_lines=None,
         line_spacing=24,
     )
-    _, three_line_summary_height = measure_text_block(
-        probe_draw,
-        summary_text,
-        summary_font,
-        2300 - right_x,
-        max_lines=3,
-        line_spacing=24,
+    summary_text_y = summary_top + 164
+    summary_bottom = summary_text_y + full_summary_height
+    left_height = _SUBJECT_CARD_BASE_HEIGHT + episode_y_shift
+    left_footer_y = (
+        _SUBJECT_SCORE_TABLE_BOTTOM
+        + episode_y_shift
+        - _SUBJECT_FOOTER_HEIGHT
+        - _SUBJECT_FOOTER_BOTTOM_GAP
     )
-    summary_extra_height = max(0, full_summary_height - three_line_summary_height)
-    height = 1674 + episode_y_shift + summary_extra_height
+    footer_y = max(left_footer_y, summary_bottom + _SUBJECT_SUMMARY_FOOTER_GAP)
+    height = max(
+        left_height,
+        footer_y + _SUBJECT_FOOTER_HEIGHT + _SUBJECT_BOTTOM_PADDING,
+    )
     primary_title, secondary_title = _extract_subject_titles(data)
 
     canvas = Image.new("RGBA", (width, height), style.surface)
@@ -857,7 +907,7 @@ def _draw_subject_card_image(
     )
     draw_text_block(
         draw,
-        (right_x, summary_top + 164, 2300, 1138),
+        (right_x, summary_text_y, 2300, footer_y - _SUBJECT_SUMMARY_FOOTER_GAP),
         summary_text,
         summary_font,
         style.body,
@@ -886,7 +936,9 @@ def _draw_subject_card_image(
         )
         cell_x = 105
         cell_y = 1102
-        cell_size = 84
+        cell_size = episode_grid.cell_size
+        cell_gap = episode_grid.gap
+        cell_font = get_font(episode_grid.font_size, bold=True)
         for item in visible_episode_items:
             fill = style.accent if item.get("aired") is True else style.accent_soft
             text_fill = (
@@ -894,11 +946,10 @@ def _draw_subject_card_image(
             )
             draw.rounded_rectangle(
                 (cell_x, cell_y, cell_x + cell_size, cell_y + cell_size),
-                radius=18,
+                radius=episode_grid.radius,
                 fill=fill,
             )
             label = str(item.get("ep") or "")
-            cell_font = get_font(33, bold=True)
             draw_centered_text(
                 draw,
                 (cell_x, cell_y, cell_x + cell_size, cell_y + cell_size),
@@ -906,10 +957,10 @@ def _draw_subject_card_image(
                 cell_font,
                 text_fill,
             )
-            cell_x += cell_size + 12
+            cell_x += cell_size + cell_gap
             if cell_x + cell_size > 675:
                 cell_x = 105
-                cell_y += cell_size + 12
+                cell_y += cell_size + cell_gap
 
     rating_counts = _extract_rating_counts(data)
     if rating_counts:
@@ -959,7 +1010,6 @@ def _draw_subject_card_image(
                 fill=style.muted,
             )
 
-    footer_y = 1495 + episode_y_shift + summary_extra_height
     date_text = _stringify_value(data.get("date"))
     platform = _stringify_value(data.get("platform"))
     if date_text:

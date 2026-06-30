@@ -129,6 +129,139 @@ def _assert_summary_continues_below_legacy_three_lines(
     pytest.fail("expected summary body pixels below the legacy three-line cutoff")
 
 
+def _build_episode_items(
+    total: int,
+    *,
+    future_episode: int | None = None,
+) -> list[dict[str, object]]:
+    episodes: list[dict[str, object]] = []
+    for episode_number in range(1, total + 1):
+        is_future = episode_number == future_episode
+        episodes.append(
+            {
+                "ep": episode_number,
+                "type": 0,
+                "airdate": (
+                    "2099-12-28"
+                    if is_future
+                    else f"2026-01-{min(episode_number, 28):02d}"
+                ),
+                "comment": 0 if is_future else 1,
+            }
+        )
+    return episodes
+
+
+def _find_near_color_components(
+    image: Image.Image,
+    target: tuple[int, int, int, int],
+    box: tuple[int, int, int, int],
+    *,
+    tolerance: int = 18,
+    min_pixels: int = 1000,
+) -> list[tuple[int, int, int, int, int]]:
+    left, top, right, bottom = box
+    pending = {
+        (x, y)
+        for y in range(top, bottom)
+        for x in range(left, right)
+        if _is_near_color(image.getpixel((x, y)), target, tolerance=tolerance)
+    }
+    components: list[tuple[int, int, int, int, int]] = []
+
+    while pending:
+        x, y = pending.pop()
+        stack = [(x, y)]
+        pixel_count = 0
+        min_x = max_x = x
+        min_y = max_y = y
+
+        while stack:
+            current_x, current_y = stack.pop()
+            pixel_count += 1
+            min_x = min(min_x, current_x)
+            max_x = max(max_x, current_x)
+            min_y = min(min_y, current_y)
+            max_y = max(max_y, current_y)
+            for neighbor in (
+                (current_x + 1, current_y),
+                (current_x - 1, current_y),
+                (current_x, current_y + 1),
+                (current_x, current_y - 1),
+            ):
+                if neighbor in pending:
+                    pending.remove(neighbor)
+                    stack.append(neighbor)
+
+        if pixel_count >= min_pixels:
+            components.append((pixel_count, min_x, min_y, max_x, max_y))
+
+    return sorted(components, key=lambda component: (component[2], component[1]))
+
+
+def _count_near_color_in_row(
+    image: Image.Image,
+    target: tuple[int, int, int, int],
+    *,
+    y: int,
+    x_left: int,
+    x_right: int,
+    tolerance: int = 10,
+) -> int:
+    return sum(
+        1
+        for x in range(x_left, x_right)
+        if _is_near_color(image.getpixel((x, y)), target, tolerance=tolerance)
+    )
+
+
+def _find_left_score_panel_bottom(image: Image.Image, *, variant: str) -> int:
+    style = _SUBJECT_CARD_STYLES[variant]
+    last_panel_y: int | None = None
+    for y in range(1350, image.height):
+        panel_pixels = _count_near_color_in_row(
+            image,
+            style.panel,
+            y=y,
+            x_left=75,
+            x_right=706,
+        )
+        if panel_pixels >= 480:
+            last_panel_y = y
+
+    if last_panel_y is None:
+        pytest.fail("expected to locate the left rating panel bottom")
+    return last_panel_y
+
+
+def _find_footer_date_panel_bounds(
+    image: Image.Image,
+    *,
+    variant: str,
+) -> tuple[int, int]:
+    style = _SUBJECT_CARD_STYLES[variant]
+    top: int | None = None
+    bottom: int | None = None
+    for y in range(1200, image.height):
+        panel_pixels = _count_near_color_in_row(
+            image,
+            style.panel,
+            y=y,
+            x_left=_SUBJECT_RIGHT_X,
+            x_right=_SUBJECT_RIGHT_X + 336,
+        )
+        if panel_pixels >= 220:
+            if top is None:
+                top = y
+            bottom = y
+        elif top is not None and bottom is not None and y - bottom > 4:
+            break
+
+    if top is None or bottom is None:
+        pytest.fail("expected to locate the right footer date panel")
+    return top, bottom
+
+
 @pytest.mark.asyncio
 async def test_render_subject_card_pillow_returns_base64() -> None:
     renderer = SubjectRenderer(render_mode="pillow")
@@ -236,15 +369,15 @@ async def test_render_subject_card_pillow_renders_all_named_variants(
 
 
 @pytest.mark.asyncio
-async def test_render_subject_card_default_variant_matches_cinematic() -> None:
+async def test_render_subject_card_default_variant_matches_pastel_lightbox() -> None:
     renderer = SubjectRenderer(render_mode="pillow")
 
     default_image = await renderer.render_subject_card(build_subject_data())
-    cinematic_image = await renderer.render_subject_card(
-        build_subject_data(), variant="cinematic_poster"
+    pastel_image = await renderer.render_subject_card(
+        build_subject_data(), variant="pastel_lightbox"
     )
 
-    assert default_image == cinematic_image
+    assert default_image == pastel_image
 
 
 @pytest.mark.asyncio
@@ -426,6 +559,76 @@ async def test_render_subject_card_pillow_includes_collection_badge() -> None:
 
 
 @pytest.mark.asyncio
+async def test_render_subject_card_pillow_renders_episode_1_to_28() -> None:
+    renderer = SubjectRenderer(render_mode="pillow")
+    subject_data = build_subject_data()
+    subject_data["total_episodes"] = 28
+    subject_data["episodes"] = _build_episode_items(28, future_episode=28)
+
+    base64_image = await renderer.render_subject_card(subject_data)
+
+    assert base64_image is not None
+    image = _decode_png_payload(base64_image)
+    style = _SUBJECT_CARD_STYLES["pastel_lightbox"]
+    episode_scan_box = (75, 1090, 705, 1440)
+    aired_cells = _find_near_color_components(
+        image,
+        style.accent,
+        episode_scan_box,
+        min_pixels=1200,
+    )
+    future_cells = _find_near_color_components(
+        image,
+        style.accent_soft,
+        episode_scan_box,
+        min_pixels=1200,
+    )
+    all_episode_cells = aired_cells + future_cells
+
+    assert len(aired_cells) == 27
+    assert len(future_cells) == 1
+    assert len(all_episode_cells) == 28
+    episode_rows = sorted({component[2] for component in all_episode_cells})
+    assert len(episode_rows) == 4
+    assert max(component[3] for component in all_episode_cells) <= 675
+    assert future_cells[0][2] == episode_rows[-1]
+
+
+@pytest.mark.asyncio
+async def test_render_subject_card_pillow_aligns_footer_with_left_content() -> None:
+    renderer = SubjectRenderer(render_mode="pillow")
+    subject_data = build_subject_data()
+    subject_data["total_episodes"] = 28
+    subject_data["episodes"] = _build_episode_items(28)
+    subject_data["summary"] = (
+        "暑假结束后的社团教室里,几名少年少女重新翻出旧放送设备,"
+        "决定把每天放学后的心事录成节目。故事不急着制造事件,"
+        "而是把友情、恋爱和家族关系一点点摊开,"
+        "让每个角色都在看似平凡的选择里靠近真正想说的话。"
+    ) * 2
+
+    base64_image = await renderer.render_subject_card(
+        subject_data,
+        variant="editorial_digest",
+    )
+
+    assert base64_image is not None
+    image = _decode_png_payload(base64_image)
+    left_panel_bottom = _find_left_score_panel_bottom(
+        image,
+        variant="editorial_digest",
+    )
+    _, footer_bottom = _find_footer_date_panel_bounds(
+        image,
+        variant="editorial_digest",
+    )
+
+    assert abs(footer_bottom - left_panel_bottom) <= 80
+    assert image.height - left_panel_bottom <= 160
+    assert image.height - footer_bottom >= 90
+
+
+@pytest.mark.asyncio
 async def test_render_subject_card_pillow_grows_for_full_episode_grid() -> None:
     renderer = SubjectRenderer(render_mode="pillow")
     subject_data = build_subject_data()
@@ -443,7 +646,7 @@ async def test_render_subject_card_pillow_grows_for_full_episode_grid() -> None:
     base64_image = await renderer.render_subject_card(subject_data)
 
     assert base64_image is not None
-    assert_png_image(base64_image, (2400, 1866), require_non_blank=True)
+    assert_png_image(base64_image, (2400, 1756), require_non_blank=True)
 
 
 @pytest.mark.asyncio
@@ -464,7 +667,7 @@ async def test_render_subject_card_pillow_caps_long_episode_grid() -> None:
     base64_image = await renderer.render_subject_card(subject_data)
 
     assert base64_image is not None
-    assert_png_image(base64_image, (2400, 1866), require_non_blank=True)
+    assert_png_image(base64_image, (2400, 1920), require_non_blank=True)
 
 
 @pytest.mark.asyncio
