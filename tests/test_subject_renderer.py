@@ -129,6 +129,25 @@ def _assert_summary_continues_below_legacy_three_lines(
     pytest.fail("expected summary body pixels below the legacy three-line cutoff")
 
 
+def _repeat_summary_until_growth_required(seed_text: str) -> str:
+    probe_draw = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
+    summary_font = get_font(45)
+    text = seed_text
+    for _ in range(16):
+        _, full_summary_height = measure_text_block(
+            probe_draw,
+            text,
+            summary_font,
+            2300 - _SUBJECT_RIGHT_X,
+            max_lines=None,
+            line_spacing=24,
+        )
+        if full_summary_height > 900:
+            return text
+        text += seed_text
+    pytest.fail("expected generated summary to require card growth")
+
+
 def _build_episode_items(
     total: int,
     *,
@@ -308,11 +327,11 @@ async def test_render_subject_card_pillow_long_tag_keeps_short_summary_layout() 
 async def test_render_subject_card_pillow_grows_for_long_japanese_summary() -> None:
     renderer = SubjectRenderer(render_mode="pillow")
     subject_data = build_subject_data()
-    subject_data["summary"] = (
+    subject_data["summary"] = _repeat_summary_until_growth_required(
         "幼いころに見上げた夏祭りの花火をきっかけに、"
         "離ればなれになった友人たちがもう一度同じ町へ集まり、"
         "それぞれの後悔と約束を抱えながら少しずつ前へ進んでいく。"
-    ) * 8
+    )
 
     base64_image = await renderer.render_subject_card(subject_data)
 
@@ -323,7 +342,7 @@ async def test_render_subject_card_pillow_grows_for_long_japanese_summary() -> N
     _assert_summary_continues_below_legacy_three_lines(
         image,
         subject_data,
-        variant="cinematic_poster",
+        variant="pastel_lightbox",
     )
 
 
@@ -331,11 +350,11 @@ async def test_render_subject_card_pillow_grows_for_long_japanese_summary() -> N
 async def test_render_subject_card_pillow_grows_for_long_english_summary() -> None:
     renderer = SubjectRenderer(render_mode="pillow")
     subject_data = build_subject_data()
-    subject_data["summary"] = (
+    subject_data["summary"] = _repeat_summary_until_growth_required(
         "After a quiet coastal town loses its observatory, "
         "three classmates rebuild the nightly radio club and discover that "
         "every broadcast changes how they remember the same summer. "
-    ) * 10
+    )
 
     base64_image = await renderer.render_subject_card(
         subject_data,
