@@ -1,4 +1,5 @@
 import importlib
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -6,7 +7,8 @@ import pytest
 
 from astrbot_plugin_bangumi.src.render import ResponseRenderer
 
-BangumiPlugin = importlib.import_module("astrbot_plugin_bangumi.main").BangumiPlugin
+bangumi_module = importlib.import_module("astrbot_plugin_bangumi.main")
+BangumiPlugin = bangumi_module.BangumiPlugin
 
 
 def test_resolve_session_key_prefers_group_id() -> None:
@@ -97,6 +99,72 @@ def test_build_proxy_url_preserves_scheme_and_existing_port() -> None:
         BangumiPlugin._build_proxy_url("proxy.local:1080", "7890")
         == "http://proxy.local:1080"
     )
+
+
+@pytest.mark.asyncio
+async def test_initialize_passes_single_proxy_url_to_render_chain(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    plugin = BangumiPlugin.__new__(BangumiPlugin)
+    plugin.context = MagicMock()
+    plugin.config_manager = MagicMock()
+    plugin.config_manager.get_proxy_http.return_value = "proxy.local"
+    plugin.config_manager.get_port.return_value = "7890"
+    plugin.config_manager.get_access_token.return_value = "token"
+    plugin.config_manager.get_user_agent.return_value = "agent"
+    plugin.config_manager.get_render_mode.return_value = "pillow"
+    plugin.scheduler_manager = MagicMock()
+    plugin._auto_fill_broadcast_times = AsyncMock()
+
+    session = MagicMock()
+    storage = MagicMock()
+    api_service = MagicMock()
+    env_manager = MagicMock()
+    env_manager.is_installed.return_value = True
+
+    build_proxy_url = MagicMock(return_value="http://proxy.local:7890")
+    bangumi_service_cls = MagicMock(return_value=api_service)
+    response_renderer_cls = MagicMock()
+    search_service_cls = MagicMock()
+    subscription_service_cls = MagicMock()
+
+    monkeypatch.setattr(
+        BangumiPlugin, "_build_proxy_url", staticmethod(build_proxy_url)
+    )
+    monkeypatch.setattr(
+        bangumi_module.StarTools,
+        "get_data_dir",
+        MagicMock(return_value=str(tmp_path)),
+    )
+    monkeypatch.setattr(
+        bangumi_module.aiohttp, "ClientSession", MagicMock(return_value=session)
+    )
+    monkeypatch.setattr(
+        bangumi_module, "BangumiRepository", MagicMock(return_value=storage)
+    )
+    monkeypatch.setattr(bangumi_module, "BangumiService", bangumi_service_cls)
+    monkeypatch.setattr(bangumi_module, "ResponseRenderer", response_renderer_cls)
+    monkeypatch.setattr(bangumi_module, "SearchService", search_service_cls)
+    monkeypatch.setattr(bangumi_module, "SubscriptionService", subscription_service_cls)
+    monkeypatch.setattr(
+        bangumi_module, "EnvManager", MagicMock(return_value=env_manager)
+    )
+
+    await BangumiPlugin.initialize(plugin)
+
+    proxy_url = "http://proxy.local:7890"
+    build_proxy_url.assert_called_once_with("proxy.local", "7890")
+    bangumi_service_cls.assert_called_once_with(
+        access_token="token",
+        user_agent="agent",
+        proxy=proxy_url,
+        session=session,
+    )
+    response_renderer_cls.assert_called_once_with(
+        session=session, render_mode="pillow", proxy_url=proxy_url
+    )
+    assert search_service_cls.call_args.kwargs["proxy_url"] == proxy_url
+    assert subscription_service_cls.call_args.kwargs["proxy_url"] == proxy_url
 
 
 @pytest.mark.asyncio

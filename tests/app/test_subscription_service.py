@@ -42,6 +42,27 @@ def mock_config_manager() -> MagicMock:
     return config_manager
 
 
+def test_subscription_service_passes_proxy_to_renderer(
+    mock_repo: MagicMock, mock_service: MagicMock, mock_config_manager: MagicMock
+) -> None:
+    service = SubscriptionService(
+        mock_repo,
+        mock_service,
+        mock_config_manager,
+        proxy_url="http://proxy.local:7890",
+    )
+
+    assert service.renderer.proxy_url == "http://proxy.local:7890"
+
+
+def test_subscription_service_defaults_to_no_proxy(
+    mock_repo: MagicMock, mock_service: MagicMock, mock_config_manager: MagicMock
+) -> None:
+    service = SubscriptionService(mock_repo, mock_service, mock_config_manager)
+
+    assert service.renderer.proxy_url is None
+
+
 @pytest.mark.asyncio
 async def test_get_subscribe_candidates_clamps_limit_and_handles_empty(
     mock_repo: MagicMock, mock_service: MagicMock, mock_config_manager: MagicMock

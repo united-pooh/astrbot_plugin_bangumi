@@ -35,16 +35,17 @@ class SearchService:
         config_manager: ConfigManager,
         session: aiohttp.ClientSession | None = None,
         text_result_builder: TextResultBuilder | None = None,
+        proxy_url: str | None = None,
     ) -> None:
         self.service = service
         self.config_manager = config_manager
         self._text_result_builder = text_result_builder or _default_text_result
         render_mode = self.config_manager.get_render_mode()
         self.subject_renderer = SubjectRenderer(
-            session=session, render_mode=render_mode
+            session=session, render_mode=render_mode, proxy_url=proxy_url
         )
         self.calendar_renderer = CalendarRenderer(
-            session=session, render_mode=render_mode
+            session=session, render_mode=render_mode, proxy_url=proxy_url
         )
 
     async def handle_subject_search(

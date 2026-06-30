@@ -79,6 +79,6 @@ async def test_render_previews_passes_rpc_url(
     )
 
     assert seen_rpc_urls == ["http://127.0.0.1:3000"] * 3
-    assert report["version"] == "v1.5.0"
+    assert report["version"] == "v1.5.1"
     assert report["rpc_url_configured"] is True
     assert (tmp_path / "preview-report-rpc.json").exists()

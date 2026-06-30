@@ -18,6 +18,7 @@ class BaseRenderer:
         self,
         session: aiohttp.ClientSession | None = None,
         render_mode: RenderMode = "pillow",
+        proxy_url: str | None = None,
     ) -> None:
         """
         初始化渲染器
@@ -32,6 +33,7 @@ class BaseRenderer:
         )
         self._session = session
         self.render_mode = normalize_render_mode(render_mode)
+        self.proxy_url = proxy_url
 
     async def _render_with_pillow_fallback(
         self,
@@ -76,7 +78,7 @@ class BaseRenderer:
         """
         通用的本地浏览器截图逻辑,返回 Base64 字符串
         """
-        managed_page = await create_page(headless=headless)
+        managed_page = await create_page(headless=headless, proxy_url=self.proxy_url)
         if not managed_page:
             raise RuntimeError("[-] 无法创建浏览器页面")
 
@@ -173,22 +175,27 @@ class BaseRenderer:
 
         # 显式使用 aiohttp.ClientTimeout,输入 timeout 为毫秒,需转换为秒
         client_timeout = aiohttp.ClientTimeout(total=timeout / 1000.0)
-
         try:
             if self._session and not self._session.closed:
                 async with self._session.post(
-                    rpc_url, json=payload, timeout=client_timeout
+                    rpc_url,
+                    json=payload,
+                    timeout=client_timeout,
+                    proxy=self.proxy_url,
                 ) as response:
                     return await self._handle_rpc_response(response)
-            else:
-                # 兜底:如果没有外部 Session,则创建临时 Session
-                async with (
-                    aiohttp.ClientSession() as session,
-                    session.post(
-                        rpc_url, json=payload, timeout=client_timeout
-                    ) as response,
-                ):
-                    return await self._handle_rpc_response(response)
+
+            # 兜底:如果没有外部 Session,则创建临时 Session
+            async with (
+                aiohttp.ClientSession() as session,
+                session.post(
+                    rpc_url,
+                    json=payload,
+                    timeout=client_timeout,
+                    proxy=self.proxy_url,
+                ) as response,
+            ):
+                return await self._handle_rpc_response(response)
 
         except aiohttp.ClientConnectorError as e:
             logger.error(f"[-] RPC 渲染服务器连接失败: {e}")

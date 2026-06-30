@@ -2,11 +2,19 @@ import base64
 import io
 import zipfile
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 import pytest
 from PIL import Image, ImageDraw
 
-from astrbot_plugin_bangumi.src.render import pillow_utils
+from astrbot_plugin_bangumi.src.render import (
+    calendar_renderer,
+    episode_renderer,
+    pillow_utils,
+    subject_renderer,
+)
+from astrbot_plugin_bangumi.src.render.calendar_renderer import CalendarRenderer
+from astrbot_plugin_bangumi.src.render.episode_renderer import EpisodeRenderer
 from astrbot_plugin_bangumi.src.render.pillow_utils import (
     create_placeholder_image,
     draw_pill,
@@ -19,6 +27,7 @@ from astrbot_plugin_bangumi.src.render.pillow_utils import (
     measure_text_block,
     wrap_text,
 )
+from astrbot_plugin_bangumi.src.render.subject_renderer import SubjectRenderer
 
 
 def test_is_visually_blank_detects_white_and_transparent_images() -> None:
@@ -232,6 +241,206 @@ def test_smiley_sans_download_failure_keeps_fallback_usable(
     assert not pillow_utils._download_smiley_sans(tmp_path)
     assert not (tmp_path / "SmileySans-Oblique.otf.tmp").exists()
     assert get_font(18) is not None
+
+
+class _ImageContent:
+    async def iter_chunked(self, chunk_size: int):
+        yield b"image-bytes"
+
+
+class _ImageResponse:
+    def __init__(self) -> None:
+        self.status = 200
+        self.headers: dict[str, str] = {}
+        self.content = _ImageContent()
+
+
+class _ImageContext:
+    def __init__(self, response: _ImageResponse) -> None:
+        self.response = response
+
+    async def __aenter__(self) -> _ImageResponse:
+        return self.response
+
+    async def __aexit__(self, *args: object) -> None:
+        return None
+
+
+class _ImageSession:
+    closed = False
+
+    def __init__(self) -> None:
+        self.get_calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
+
+    def get(self, *args: object, **kwargs: object) -> _ImageContext:
+        self.get_calls.append((args, kwargs))
+        return _ImageContext(_ImageResponse())
+
+
+class _TempSessionContext:
+    def __init__(self, session: _ImageSession) -> None:
+        self.session = session
+
+    async def __aenter__(self) -> _ImageSession:
+        return self.session
+
+    async def __aexit__(self, *args: object) -> None:
+        return None
+
+
+class _TempSessionFactory:
+    def __init__(self) -> None:
+        self.sessions: list[_ImageSession] = []
+
+    def __call__(self) -> _TempSessionContext:
+        session = _ImageSession()
+        self.sessions.append(session)
+        return _TempSessionContext(session)
+
+
+def _patch_image_loader(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        pillow_utils,
+        "open_image_from_bytes",
+        lambda data: Image.new("RGBA", (1, 1), (80, 120, 140, 255)),
+    )
+
+
+@pytest.mark.asyncio
+async def test_load_image_source_uses_proxy_with_shared_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_image_loader(monkeypatch)
+    session = _ImageSession()
+
+    loaded = await load_image_source(
+        "https://example.invalid/cover.png",
+        session=session,
+        proxy_url="http://proxy.local:7890",
+    )
+
+    assert loaded is not None
+    assert session.get_calls[0][1]["proxy"] == "http://proxy.local:7890"
+
+
+@pytest.mark.asyncio
+async def test_load_image_source_omits_proxy_by_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_image_loader(monkeypatch)
+    session = _ImageSession()
+
+    loaded = await load_image_source(
+        "https://example.invalid/cover.png",
+        session=session,
+    )
+
+    assert loaded is not None
+    assert session.get_calls[0][1]["proxy"] is None
+
+
+@pytest.mark.asyncio
+async def test_load_image_source_uses_proxy_with_temporary_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_image_loader(monkeypatch)
+    session_factory = _TempSessionFactory()
+    monkeypatch.setattr(pillow_utils.aiohttp, "ClientSession", session_factory)
+
+    loaded = await load_image_source(
+        "https://example.invalid/cover.png",
+        proxy_url="http://proxy.local:7890",
+    )
+
+    assert loaded is not None
+    assert session_factory.sessions[0].get_calls[0][1]["proxy"] == (
+        "http://proxy.local:7890"
+    )
+
+
+@pytest.mark.asyncio
+async def test_subject_pillow_renderer_passes_proxy_to_image_loader(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    load_image_source_mock = AsyncMock(return_value=None)
+    monkeypatch.setattr(subject_renderer, "load_image_source", load_image_source_mock)
+    monkeypatch.setattr(
+        subject_renderer, "_draw_subject_card_image", lambda *args: "b64"
+    )
+    renderer = SubjectRenderer(
+        render_mode="pillow", proxy_url="http://proxy.local:7890"
+    )
+
+    result = await renderer._render_subject_card_pillow(
+        {"image_url": "https://example.invalid/subject.png"}
+    )
+
+    assert result == "b64"
+    load_image_source_mock.assert_awaited_once_with(
+        "https://example.invalid/subject.png",
+        None,
+        proxy_url="http://proxy.local:7890",
+    )
+
+
+@pytest.mark.asyncio
+async def test_episode_pillow_renderer_passes_proxy_to_image_loader(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    load_image_source_mock = AsyncMock(return_value=None)
+    monkeypatch.setattr(episode_renderer, "load_image_source", load_image_source_mock)
+    monkeypatch.setattr(
+        episode_renderer, "_draw_episode_card_image", lambda *args: "b64"
+    )
+    renderer = EpisodeRenderer(
+        render_mode="pillow", proxy_url="http://proxy.local:7890"
+    )
+
+    result = await renderer._render_episode_pillow(
+        {"image_url": "https://example.invalid/episode.png"}
+    )
+
+    assert result == "b64"
+    load_image_source_mock.assert_awaited_once_with(
+        "https://example.invalid/episode.png",
+        None,
+        proxy_url="http://proxy.local:7890",
+    )
+
+
+@pytest.mark.asyncio
+async def test_calendar_pillow_renderer_passes_proxy_to_image_loader(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    load_image_source_mock = AsyncMock(return_value=None)
+    monkeypatch.setattr(calendar_renderer, "load_image_source", load_image_source_mock)
+    monkeypatch.setattr(
+        calendar_renderer, "_draw_calendar_card_image", lambda *args: "b64"
+    )
+    renderer = CalendarRenderer(
+        render_mode="pillow", proxy_url="http://proxy.local:7890"
+    )
+
+    result = await renderer._render_calendar_pillow(
+        [
+            {
+                "weekday": {"id": 1, "cn": "星期一"},
+                "items": [
+                    {
+                        "name": "Bangumi",
+                        "images": {"common": "https://example.invalid/calendar.png"},
+                    }
+                ],
+            }
+        ]
+    )
+
+    assert result == "b64"
+    load_image_source_mock.assert_awaited_once_with(
+        "https://example.invalid/calendar.png",
+        None,
+        proxy_url="http://proxy.local:7890",
+    )
 
 
 @pytest.mark.asyncio

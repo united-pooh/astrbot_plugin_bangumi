@@ -627,9 +627,34 @@ async def _read_limited_image(response: aiohttp.ClientResponse) -> bytes | None:
     return bytes(buffer)
 
 
+async def _image_from_http_response(
+    response: aiohttp.ClientResponse, source: str
+) -> Image.Image | None:
+    if response.status != 200:
+        logger.warning(f"[+] 图片下载失败,状态码: {response.status}, url={source}")
+        return None
+
+    limited_bytes = await _read_limited_image(response)
+    if limited_bytes is None:
+        logger.warning(f"[+] 图片过大,已跳过: url={source}")
+        return None
+    return await asyncio.to_thread(open_image_from_bytes, limited_bytes)
+
+
+async def _download_http_image(
+    session: aiohttp.ClientSession,
+    source: str,
+    timeout: aiohttp.ClientTimeout,
+    proxy_url: str | None,
+) -> Image.Image | None:
+    async with session.get(source, timeout=timeout, proxy=proxy_url) as response:
+        return await _image_from_http_response(response, source)
+
+
 async def load_image_source(
     source: str | None,
     session: aiohttp.ClientSession | None = None,
+    proxy_url: str | None = None,
 ) -> Image.Image | None:
     if not source:
         return None
@@ -659,32 +684,14 @@ async def load_image_source(
 
     try:
         if session and not session.closed:
-            async with session.get(source, timeout=client_timeout) as response:
-                if response.status != 200:
-                    logger.warning(
-                        f"[+] 图片下载失败,状态码: {response.status}, url={source}"
-                    )
-                    return None
-                limited_bytes = await _read_limited_image(response)
-                if limited_bytes is None:
-                    logger.warning(f"[+] 图片过大,已跳过: url={source}")
-                    return None
-                return await asyncio.to_thread(open_image_from_bytes, limited_bytes)
+            return await _download_http_image(
+                session, source, client_timeout, proxy_url
+            )
 
-        async with (
-            aiohttp.ClientSession() as temp_session,
-            temp_session.get(source, timeout=client_timeout) as response,
-        ):
-            if response.status != 200:
-                logger.warning(
-                    f"[+] 图片下载失败,状态码: {response.status}, url={source}"
-                )
-                return None
-            limited_bytes = await _read_limited_image(response)
-            if limited_bytes is None:
-                logger.warning(f"[+] 图片过大,已跳过: url={source}")
-                return None
-            return await asyncio.to_thread(open_image_from_bytes, limited_bytes)
+        async with aiohttp.ClientSession() as temp_session:
+            return await _download_http_image(
+                temp_session, source, client_timeout, proxy_url
+            )
     except (
         aiohttp.ClientError,
         TimeoutError,

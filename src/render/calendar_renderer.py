@@ -82,6 +82,7 @@ def reorder_days(calendar_data: list[CalendarDay]) -> list[CalendarDay]:
 async def _load_calendar_covers(
     calendar_data: list[CalendarDay],
     session: aiohttp.ClientSession | None,
+    proxy_url: str | None = None,
 ) -> dict[tuple[int, int], Image.Image | None]:
     semaphore = asyncio.Semaphore(_CALENDAR_COVER_CONCURRENCY)
 
@@ -94,6 +95,7 @@ async def _load_calendar_covers(
             image = await load_image_source(
                 _item_image_source(item),
                 session,
+                proxy_url=proxy_url,
             )
         return (day_index, item_index), image
 
@@ -349,7 +351,9 @@ def _draw_calendar_card_image(
 
 class CalendarRenderer(BaseRenderer):
     async def _render_calendar_pillow(self, calendar_data: list[CalendarDay]) -> str:
-        cover_images = await _load_calendar_covers(calendar_data, self._session)
+        cover_images = await _load_calendar_covers(
+            calendar_data, self._session, proxy_url=self.proxy_url
+        )
         return await asyncio.to_thread(
             _draw_calendar_card_image,
             calendar_data,

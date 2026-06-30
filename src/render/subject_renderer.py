@@ -1094,7 +1094,9 @@ class SubjectRenderer(BaseRenderer):
         variant: EpisodeCardVariant = DEFAULT_EPISODE_CARD_VARIANT,
     ) -> str:
         cover_source = _stringify_value(render_data.get("image_url"))
-        cover_image = await load_image_source(cover_source, self._session)
+        cover_image = await load_image_source(
+            cover_source, self._session, proxy_url=self.proxy_url
+        )
         return await asyncio.to_thread(
             _draw_subject_card_image,
             render_data,

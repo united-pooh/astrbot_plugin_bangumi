@@ -1,9 +1,10 @@
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from astrbot_plugin_bangumi.src.render.base_renderer import BaseRenderer
 from astrbot_plugin_bangumi.src.render.calendar_renderer import CalendarRenderer
+from astrbot_plugin_bangumi.src.utils.browser import create_page
 from astrbot_plugin_bangumi.tests.render.image_assertions import assert_png_image
 
 INLINE_HTML = """
@@ -46,6 +47,108 @@ def _fail_if_pillow_branch_is_used(*args: object, **kwargs: object) -> None:
 
 async def _fake_pillow_fallback() -> str:
     return "pillow-b64"
+
+
+class _AsyncContext:
+    def __init__(self, value: object) -> None:
+        self.value = value
+
+    async def __aenter__(self) -> object:
+        return self.value
+
+    async def __aexit__(self, *args: object) -> None:
+        return None
+
+
+class _RpcResponse:
+    status = 200
+
+    async def json(self) -> dict[str, dict[str, str]]:
+        return {"result": {"image": "rpc-b64"}}
+
+
+class _RpcSession:
+    closed = False
+
+    def __init__(self) -> None:
+        self.post_calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
+
+    def post(self, *args: object, **kwargs: object) -> _AsyncContext:
+        self.post_calls.append((args, kwargs))
+        return _AsyncContext(_RpcResponse())
+
+
+def _fake_playwright_stack() -> tuple[MagicMock, MagicMock]:
+    page = MagicMock()
+    context = MagicMock()
+    context.new_page = AsyncMock(return_value=page)
+    browser = MagicMock()
+    browser.new_context = AsyncMock(return_value=context)
+    playwright = MagicMock()
+    playwright.chromium.launch = AsyncMock(return_value=browser)
+    starter = MagicMock()
+    starter.start = AsyncMock(return_value=playwright)
+    return starter, playwright
+
+
+@pytest.mark.asyncio
+async def test_base_renderer_rpc_post_uses_proxy_when_configured() -> None:
+    session = _RpcSession()
+    renderer = BaseRenderer(
+        session=session,
+        render_mode="rpc",
+        proxy_url="http://proxy.local:7890",
+    )
+
+    result = await renderer._render_via_rpc("https://rpc.invalid", "html", "#card")
+
+    assert result == "rpc-b64"
+    assert session.post_calls[0][1]["proxy"] == "http://proxy.local:7890"
+
+
+@pytest.mark.asyncio
+async def test_base_renderer_rpc_post_omits_proxy_by_default() -> None:
+    session = _RpcSession()
+    renderer = BaseRenderer(session=session, render_mode="rpc")
+
+    result = await renderer._render_via_rpc("https://rpc.invalid", "html", "#card")
+
+    assert result == "rpc-b64"
+    assert session.post_calls[0][1]["proxy"] is None
+
+
+@pytest.mark.asyncio
+async def test_create_page_maps_proxy_to_chromium_launch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    playwright_api = pytest.importorskip("playwright.async_api")
+    starter, playwright = _fake_playwright_stack()
+    monkeypatch.setattr(
+        playwright_api, "async_playwright", MagicMock(return_value=starter)
+    )
+
+    managed_page = await create_page(proxy_url="http://proxy.local:7890")
+
+    assert managed_page is not None
+    launch_kwargs = playwright.chromium.launch.await_args.kwargs
+    assert launch_kwargs["proxy"] == {"server": "http://proxy.local:7890"}
+
+
+@pytest.mark.asyncio
+async def test_create_page_omits_proxy_by_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    playwright_api = pytest.importorskip("playwright.async_api")
+    starter, playwright = _fake_playwright_stack()
+    monkeypatch.setattr(
+        playwright_api, "async_playwright", MagicMock(return_value=starter)
+    )
+
+    managed_page = await create_page()
+
+    assert managed_page is not None
+    launch_kwargs = playwright.chromium.launch.await_args.kwargs
+    assert "proxy" not in launch_kwargs
 
 
 @pytest.mark.asyncio

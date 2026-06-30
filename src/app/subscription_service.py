@@ -32,13 +32,16 @@ class SubscriptionService:
         config_manager: ConfigManager,
         session: aiohttp.ClientSession | None = None,
         context: "Context | None" = None,
+        proxy_url: str | None = None,
     ) -> None:
         self.storage = repository
         self.service = service
         self.config_manager = config_manager
         self.context = context
         self.renderer = EpisodeRenderer(
-            session=session, render_mode=self.config_manager.get_render_mode()
+            session=session,
+            render_mode=self.config_manager.get_render_mode(),
+            proxy_url=proxy_url,
         )
 
     async def get_subscribe_candidates(

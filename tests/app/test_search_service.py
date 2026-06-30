@@ -27,6 +27,28 @@ def mock_config_manager() -> MagicMock:
     return config_manager
 
 
+def test_search_service_passes_proxy_to_renderers(
+    mock_service: MagicMock, mock_config_manager: MagicMock
+) -> None:
+    service = SearchService(
+        mock_service,
+        mock_config_manager,
+        proxy_url="http://proxy.local:7890",
+    )
+
+    assert service.subject_renderer.proxy_url == "http://proxy.local:7890"
+    assert service.calendar_renderer.proxy_url == "http://proxy.local:7890"
+
+
+def test_search_service_defaults_to_no_proxy(
+    mock_service: MagicMock, mock_config_manager: MagicMock
+) -> None:
+    service = SearchService(mock_service, mock_config_manager)
+
+    assert service.subject_renderer.proxy_url is None
+    assert service.calendar_renderer.proxy_url is None
+
+
 @pytest.mark.asyncio
 async def test_handle_subject_search_no_results(
     mock_service: MagicMock, mock_config_manager: MagicMock

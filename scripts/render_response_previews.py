@@ -13,7 +13,7 @@ import aiohttp
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 PACKAGE_PARENT = PROJECT_ROOT.parent
-DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "rendered_images/response-card-v1.5.0"
+DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "rendered_images/response-card-v1.5.1"
 DEFAULT_QUERY = "冰之城墙"
 DEFAULT_USER_AGENT = (
     "AstrBot-Bangumi-Plugin/response-preview "
@@ -130,7 +130,7 @@ async def render_previews(
         previews.append({"variant": variant, "path": str(target)})
 
     report = {
-        "version": "v1.5.0",
+        "version": "v1.5.1",
         "render_mode": render_mode,
         "rpc_url_configured": bool(rpc_url),
         "query": query,
@@ -147,7 +147,7 @@ async def render_previews(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Render v1.5.0 response card previews with real Bangumi data."
+        description="Render v1.5.1 response card previews with real Bangumi data."
     )
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT_DIR)
     parser.add_argument("--query", default=DEFAULT_QUERY)

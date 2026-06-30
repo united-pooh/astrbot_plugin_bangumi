@@ -578,7 +578,9 @@ def _draw_episode_card_image(
 class EpisodeRenderer(BaseRenderer):
     async def _render_episode_pillow(self, render_data: RenderData) -> str:
         image_url = _stringify_value(render_data.get("image_url"))
-        cover_image = await load_image_source(image_url, self._session)
+        cover_image = await load_image_source(
+            image_url, self._session, proxy_url=self.proxy_url
+        )
         return await asyncio.to_thread(
             _draw_episode_card_image, render_data, cover_image
         )

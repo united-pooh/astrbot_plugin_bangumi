@@ -100,6 +100,7 @@ class BangumiPlugin(Star):  # type: ignore[misc]
         self.session = aiohttp.ClientSession()
 
         # 3. 初始化核心 API 服务
+        proxy_url: str | None = None
         try:
             proxy_url = self._build_proxy_url(
                 self.config_manager.get_proxy_http(),
@@ -117,7 +118,9 @@ class BangumiPlugin(Star):  # type: ignore[misc]
 
         # 4. 初始化业务逻辑服务 (Dependency Injection)
         self.response_renderer = ResponseRenderer(
-            session=self.session, render_mode=self.config_manager.get_render_mode()
+            session=self.session,
+            render_mode=self.config_manager.get_render_mode(),
+            proxy_url=proxy_url,
         )
         if self.service:
             # 搜索服务
@@ -126,6 +129,7 @@ class BangumiPlugin(Star):  # type: ignore[misc]
                 config_manager=self.config_manager,
                 session=self.session,
                 text_result_builder=self._result_for_text,
+                proxy_url=proxy_url,
             )
 
             # 订阅服务
@@ -136,6 +140,7 @@ class BangumiPlugin(Star):  # type: ignore[misc]
                     config_manager=self.config_manager,
                     session=self.session,
                     context=self.context,
+                    proxy_url=proxy_url,
                 )
 
         # 5. 其他初始化流程

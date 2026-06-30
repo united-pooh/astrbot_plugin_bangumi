@@ -50,6 +50,7 @@ async def create_page(
     width: int = 1024,
     height: int = 768,
     scale_factor: int = 3,
+    proxy_url: str | None = None,
 ) -> "ManagedPage | None":
     try:
         from playwright.async_api import ViewportSize, async_playwright
@@ -68,10 +69,17 @@ async def create_page(
             "--disable-default-apps",
         ]
 
-        browser = await playwright.chromium.launch(
-            headless=headless,
-            args=chrome_args,
-        )
+        if proxy_url:
+            browser = await playwright.chromium.launch(
+                headless=headless,
+                args=chrome_args,
+                proxy={"server": proxy_url},
+            )
+        else:
+            browser = await playwright.chromium.launch(
+                headless=headless,
+                args=chrome_args,
+            )
 
         # 创建上下文
         context = await browser.new_context(

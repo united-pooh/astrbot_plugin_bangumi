@@ -266,8 +266,9 @@ class ResponseRenderer(BaseRenderer):
         self,
         session: aiohttp.ClientSession | None = None,
         render_mode: RenderMode = "pillow",
+        proxy_url: str | None = None,
     ) -> None:
-        super().__init__(session=session, render_mode=render_mode)
+        super().__init__(session=session, render_mode=render_mode, proxy_url=proxy_url)
 
     async def _render_response_pillow(
         self,

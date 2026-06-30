@@ -1,7 +1,7 @@
 <div align="center">
 
 # Bangumi 搜索插件使用指南
-[![version](https://img.shields.io/badge/version-v1.5.0-blue.svg)](https://github.com/united-pooh/astrbot_plugin_bangumi)
+[![version](https://img.shields.io/badge/version-v1.5.1-blue.svg)](https://github.com/united-pooh/astrbot_plugin_bangumi)
 [![License](https://img.shields.io/badge/license-Apache%202.0-green.svg)](LICENSE-2.0)
 [![AstrBot](https://img.shields.io/badge/AstrBot-%3E%3D4.26.2-orange.svg)](https://github.com/Soulter/AstrBot)
 [![Python](https://img.shields.io/badge/python-3.12%2B-blue.svg)](https://www.python.org/)
@@ -63,7 +63,7 @@
 | `access_token` | string | 无 | Bangumi API 访问令牌(部分接口需授权)[¹](#access-token-获取) |
 | `user_agent` | string | 无 | 请求头 User-Agent 标识,为空时使用插件默认值 |
 | `max_fuzzy_results` | int | `5` | 模糊搜索最大返回数量(范围:1–200) |
-| `proxy_http` | string | 无 | 代理主机或地址(例如 `192.168.0.1` 或 `http://127.0.0.1`;省略协议时按 `http://` 处理) |
+| `proxy_http` | string | 无 | 代理主机或地址(例如 `192.168.0.1` 或 `http://127.0.0.1`;省略协议时按 `http://` 处理);启用后同时覆盖 Bangumi API、远程 RPC 渲染、本地 Playwright 和 Pillow 图片下载 |
 | `port` | string | 无 | HTTP 代理端口(例如 `7890`;地址已带端口时仍需填写本项以启用代理) |
 | `max_retries` | int | `3` | 网络错误最大重试次数(范围:1–10) |
 | `render_server_url` | string | `https://api.unitedpooh.top/rpc` | 远程渲染图片的 RPC 服务器地址 |
@@ -94,7 +94,7 @@
 python scripts/render_subject_variants.py
 ```
 
-生成结果会写入本地忽略目录 `rendered_images/subject-card-v1.5.0/`,用于用户审核前的可读性自检。
+生成结果会写入本地忽略目录 `rendered_images/subject-card-v1.5.1/`,用于用户审核前的可读性自检。
 
 ### 长文本响应卡片
 
@@ -104,7 +104,7 @@ python scripts/render_subject_variants.py
 python scripts/render_response_previews.py
 ```
 
-生成结果会写入本地忽略目录 `rendered_images/response-card-v1.5.0/`,用于用户审核前的可读性自检。
+生成结果会写入本地忽略目录 `rendered_images/response-card-v1.5.1/`,用于用户审核前的可读性自检。
 
 ### 单集卡片预览
 
