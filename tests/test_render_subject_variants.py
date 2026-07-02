@@ -86,7 +86,7 @@ async def test_render_previews_outputs_all_variants(
         user_agent="test-agent",
     )
 
-    assert report["version"] == "v1.5.4"
+    assert report["version"] == "v1.5.5"
     assert report["subject_id"] == "123"
     assert [item["variant"] for item in report["previews"]] == [
         "pastel_lightbox",

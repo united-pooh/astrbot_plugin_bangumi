@@ -1,6 +1,7 @@
 import base64
 import io
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
@@ -195,9 +196,11 @@ def test_downloaded_font_candidates_prioritize_resource_han_for_default_font(
 
     assert regular_candidates == (
         (tmp_path / "ResourceHanRoundedCN-Regular.ttf", 0),
+        (tmp_path / "NotoSansCJKsc-Regular.otf", 0),
     )
     assert bold_candidates == (
         (tmp_path / "ResourceHanRoundedCN-Bold.ttf", 0),
+        (tmp_path / "NotoSansCJKsc-Bold.otf", 0),
     )
 
 
@@ -236,9 +239,7 @@ def test_downloaded_japanese_fallback_font_candidates_prioritize_zen_maru(
 
 
 def test_japanese_system_candidates_prefer_hiragino_before_gb_font() -> None:
-    regular_paths = [
-        path for path, _ in pillow_utils._JAPANESE_REGULAR_FONT_CANDIDATES
-    ]
+    regular_paths = [path for path, _ in pillow_utils._JAPANESE_REGULAR_FONT_CANDIDATES]
     bold_paths = [path for path, _ in pillow_utils._JAPANESE_BOLD_FONT_CANDIDATES]
 
     assert regular_paths.index(
@@ -332,6 +333,51 @@ def test_download_font_file_uses_proxy_url(
         (
             "https://example.com/ZenMaruGothic-Regular.ttf",
             "http://proxy.local:7890",
+        )
+    ]
+
+
+def test_extract_7z_archive_uses_py7zr_when_system_extractors_are_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[tuple[Path, str, Path, list[str]]] = []
+
+    class FakeSevenZipFile:
+        def __init__(self, archive_path: Path, mode: str) -> None:
+            self.archive_path = archive_path
+            self.mode = mode
+
+        def __enter__(self) -> "FakeSevenZipFile":
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+        def extract(self, *, path: Path, targets: list[str]) -> None:
+            calls.append((self.archive_path, self.mode, path, targets))
+
+    monkeypatch.setattr(pillow_utils.shutil, "which", lambda name: None)
+    monkeypatch.setattr(
+        pillow_utils.importlib,
+        "import_module",
+        lambda name: SimpleNamespace(SevenZipFile=FakeSevenZipFile),
+    )
+
+    archive_path = tmp_path / "RHR-CN-0.990.7z"
+    archive_path.write_bytes(b"archive")
+
+    pillow_utils._extract_7z_archive(
+        archive_path,
+        tmp_path / "fonts",
+        ("ResourceHanRoundedCN-Regular.ttf", "ResourceHanRoundedCN-Bold.ttf"),
+    )
+
+    assert calls == [
+        (
+            archive_path,
+            "r",
+            tmp_path / "fonts",
+            ["ResourceHanRoundedCN-Regular.ttf", "ResourceHanRoundedCN-Bold.ttf"],
         )
     ]
 

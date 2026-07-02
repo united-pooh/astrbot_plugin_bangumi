@@ -14,7 +14,7 @@ from PIL import Image, ImageChops
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 PACKAGE_PARENT = PROJECT_ROOT.parent
-DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "rendered_images/subject-card-v1.5.4"
+DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "rendered_images/subject-card-v1.5.5"
 DEFAULT_QUERY = "葬送的芙莉莲"
 DEFAULT_USER_AGENT = (
     "AstrBot-Bangumi-Plugin/subject-preview "
@@ -224,7 +224,7 @@ async def render_previews(
         previews.append(preview)
 
     report = {
-        "version": "v1.5.4",
+        "version": "v1.5.5",
         "render_mode": render_mode,
         "rpc_url_configured": bool(rpc_url),
         "query": query,
@@ -242,7 +242,7 @@ async def render_previews(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Render v1.5.4 subject search card previews with real Bangumi data."
+        description="Render v1.5.5 subject search card previews with real Bangumi data."
     )
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT_DIR)
     parser.add_argument("--query", default=DEFAULT_QUERY)

@@ -1,5 +1,14 @@
 # Changelog
 
+## v1.5.5
+
+### 修复
+- **冷启动字体兜底**: Pillow 字体预热会先下载 `Noto Sans CJK SC` 与 `Zen Maru Gothic` 直链兜底字体,再尝试下载并解压 `Resource Han Rounded CN`;`Resource Han Rounded CN` 超时、下载失败或缺少 7z 解压环境时不再直接退化到系统默认字体导致中文方块。
+- **字体下载诊断**: 字体下载失败日志会输出异常类型和 `repr`,避免 `TimeoutError` 等空字符串异常只留下空白 warning。
+
+### 更新
+- **版本同步**: 将插件元数据、README 版本徽章、预览脚本报告版本和本地预览输出目录推进到 `v1.5.5`。
+
 ## v1.5.4
 
 ### 修复

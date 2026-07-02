@@ -41,7 +41,19 @@ _RESOURCE_HAN_ROUNDED_CN_ARCHIVE_URL = (
 )
 _ZEN_MARU_GOTHIC_REGULAR_FILENAME = "ZenMaruGothic-Regular.ttf"
 _ZEN_MARU_GOTHIC_BOLD_FILENAME = "ZenMaruGothic-Bold.ttf"
-_DIRECT_FONT_DOWNLOAD_SOURCES = (
+_NOTO_SANS_CJK_SC_REGULAR_FILENAME = "NotoSansCJKsc-Regular.otf"
+_NOTO_SANS_CJK_SC_BOLD_FILENAME = "NotoSansCJKsc-Bold.otf"
+_DIRECT_FALLBACK_FONT_DOWNLOAD_SOURCES = (
+    (
+        _NOTO_SANS_CJK_SC_REGULAR_FILENAME,
+        "https://raw.githubusercontent.com/notofonts/noto-cjk/main/"
+        "Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Regular.otf",
+    ),
+    (
+        _NOTO_SANS_CJK_SC_BOLD_FILENAME,
+        "https://raw.githubusercontent.com/notofonts/noto-cjk/main/"
+        "Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Bold.otf",
+    ),
     (
         _ZEN_MARU_GOTHIC_REGULAR_FILENAME,
         "https://raw.githubusercontent.com/googlefonts/zen-marugothic/main/"
@@ -133,12 +145,15 @@ def _download_fonts(font_dir: Path, proxy_url: str | None = None) -> None:
         logger.warning(f"Pillow 字体目录创建失败,跳过字体下载: {e}")
         return
 
-    downloaded = _download_resource_han_rounded_cn(font_dir, proxy_url=proxy_url)
-    for filename, url in _DIRECT_FONT_DOWNLOAD_SOURCES:
+    downloaded = False
+    for filename, url in _DIRECT_FALLBACK_FONT_DOWNLOAD_SOURCES:
         downloaded = (
             _download_font_file(font_dir / filename, url, proxy_url=proxy_url)
             or downloaded
         )
+    downloaded = (
+        _download_resource_han_rounded_cn(font_dir, proxy_url=proxy_url) or downloaded
+    )
 
     if downloaded:
         get_font.cache_clear()
@@ -165,6 +180,11 @@ def _download_url_bytes(url: str, *, proxy_url: str | None) -> bytes:
     return asyncio.run(_download_url_bytes_async(url, proxy_url=proxy_url))
 
 
+def _format_download_error(error: Exception) -> str:
+    detail = str(error) or repr(error)
+    return f"{type(error).__name__}: {detail}"
+
+
 def _download_font_file(
     target: Path,
     url: str,
@@ -185,8 +205,38 @@ def _download_font_file(
         return True
     except Exception as e:
         temp_target.unlink(missing_ok=True)
-        logger.warning(f"Pillow 字体下载失败 {target.name}: {e}")
+        logger.warning(
+            f"Pillow 字体下载失败 {target.name}: {_format_download_error(e)}"
+        )
         return False
+
+
+def _extract_7z_archive(
+    archive_path: Path,
+    target_dir: Path,
+    members: Sequence[str],
+) -> None:
+    extractor = shutil.which("bsdtar") or shutil.which("7zz") or shutil.which("7z")
+    if extractor is not None:
+        if extractor.endswith("bsdtar"):
+            command = [extractor, "-xf", str(archive_path), "-C", str(target_dir)]
+            command.extend(members)
+        else:
+            command = [extractor, "e", "-y", f"-o{target_dir}", str(archive_path)]
+            command.extend(members)
+        subprocess.run(command, check=True, capture_output=True, text=True)
+        return
+
+    try:
+        py7zr = importlib.import_module("py7zr")
+    except ImportError as e:
+        raise RuntimeError(
+            "当前环境缺少 bsdtar/7z/py7zr,无法解压 Resource Han Rounded CN"
+        ) from e
+
+    seven_zip_file = cast(Any, py7zr).SevenZipFile
+    with seven_zip_file(archive_path, mode="r") as archive:
+        archive.extract(path=target_dir, targets=list(members))
 
 
 def _download_resource_han_rounded_cn(
@@ -215,33 +265,14 @@ def _download_resource_han_rounded_cn(
             raise RuntimeError("Resource Han Rounded CN 字体包超过下载大小限制")
         temp_archive.write_bytes(payload)
 
-        extractor = (
-            shutil.which("bsdtar") or shutil.which("7zz") or shutil.which("7z")
+        _extract_7z_archive(
+            temp_archive,
+            font_dir,
+            (
+                _RESOURCE_HAN_ROUNDED_CN_REGULAR_FILENAME,
+                _RESOURCE_HAN_ROUNDED_CN_BOLD_FILENAME,
+            ),
         )
-        if extractor is None:
-            raise RuntimeError("当前环境缺少 bsdtar/7z,无法解压 Resource Han Rounded CN")
-
-        if extractor.endswith("bsdtar"):
-            command = [
-                extractor,
-                "-xf",
-                str(temp_archive),
-                "-C",
-                str(font_dir),
-                _RESOURCE_HAN_ROUNDED_CN_REGULAR_FILENAME,
-                _RESOURCE_HAN_ROUNDED_CN_BOLD_FILENAME,
-            ]
-        else:
-            command = [
-                extractor,
-                "e",
-                "-y",
-                f"-o{font_dir}",
-                str(temp_archive),
-                _RESOURCE_HAN_ROUNDED_CN_REGULAR_FILENAME,
-                _RESOURCE_HAN_ROUNDED_CN_BOLD_FILENAME,
-            ]
-        subprocess.run(command, check=True, capture_output=True, text=True)
         if not (
             regular_font.exists()
             and regular_font.stat().st_size > 0
@@ -253,7 +284,10 @@ def _download_resource_han_rounded_cn(
         logger.info(f"Pillow 字体已下载: {bold_font}")
         return True
     except Exception as e:
-        logger.warning(f"Resource Han Rounded CN 下载失败,将使用系统字体退化渲染: {e}")
+        logger.warning(
+            "Resource Han Rounded CN 下载失败,将使用中文兜底字体退化渲染: "
+            f"{_format_download_error(e)}"
+        )
         return False
     finally:
         temp_archive.unlink(missing_ok=True)
@@ -267,7 +301,10 @@ def _downloaded_font_candidates(bold: bool) -> tuple[tuple[Path, int], ...]:
         if bold
         else _RESOURCE_HAN_ROUNDED_CN_REGULAR_FILENAME
     )
-    return ((_font_dir / filename, 0),)
+    fallback_filename = (
+        _NOTO_SANS_CJK_SC_BOLD_FILENAME if bold else _NOTO_SANS_CJK_SC_REGULAR_FILENAME
+    )
+    return ((_font_dir / filename, 0), (_font_dir / fallback_filename, 0))
 
 
 def _downloaded_japanese_font_candidates(bold: bool) -> tuple[tuple[Path, int], ...]:
@@ -499,10 +536,9 @@ def _resolve_text_font_runs(
 
     for char in text:
         target_font = localized_font
-        if (
-            not _font_supports_character(localized_font, char)
-            and _font_supports_character(fallback_font, char)
-        ):
+        if not _font_supports_character(
+            localized_font, char
+        ) and _font_supports_character(fallback_font, char):
             target_font = fallback_font
             fallback_used = True
 
