@@ -500,6 +500,7 @@ class BangumiPlugin(Star):  # type: ignore[misc]
                 group_id=group_id,
                 subject_id=candidates[0]["subject_id"],
             )
+            await self._auto_fill_broadcast_times()
             yield await self._result_for_text(event, result)
             return
 
@@ -553,6 +554,7 @@ class BangumiPlugin(Star):  # type: ignore[misc]
                 group_id=session_key,
                 subject_id=selected["subject_id"],
             )
+            await self._auto_fill_broadcast_times()
             await self._send_text(wait_event, result)
             wait_event.stop_event()
             controller.stop()
