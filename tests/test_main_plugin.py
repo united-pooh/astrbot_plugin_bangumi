@@ -361,6 +361,17 @@ async def test_subscribe_single_candidate_uses_subject_id() -> None:
     plugin = BangumiPlugin.__new__(BangumiPlugin)
     plugin.config_manager = MagicMock()
     plugin.config_manager.get_max_fuzzy_results.return_value = 5
+    plugin.config_manager.get_proxy_http.return_value = ""
+    plugin.config_manager.get_port.return_value = ""
+    plugin.storage = MagicMock()
+    plugin.session = MagicMock()
+    mock_resp = MagicMock()
+    mock_resp.status = 200
+    mock_resp.json = AsyncMock(return_value={"items": []})
+    mock_ctx = MagicMock()
+    mock_ctx.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_ctx.__aexit__ = AsyncMock(return_value=None)
+    plugin.session.get.return_value = mock_ctx
     plugin.subscription_service = MagicMock()
     plugin.subscription_service.get_subscribe_candidates = AsyncMock(
         return_value=(None, [{"subject_id": "1", "name": "番"}])

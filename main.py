@@ -178,16 +178,26 @@ class BangumiPlugin(Star):  # type: ignore[misc]
         从 bgmlist API 获取放送时间数据,填充到已订阅的番剧记录中。
         仅填充 broadcast_time 为空的条目,已有值的不覆盖。
         """
-        if not self.storage:
+        storage = getattr(self, "storage", None)
+        if not storage:
             return
 
-        bgmlist_data = await fetch_onair_data(session=self.session)
+        from contextlib import suppress
+
+        proxy_url: str | None = None
+        with suppress(RuntimeError, ValueError, TypeError):
+            proxy_url = self._build_proxy_url(
+                self.config_manager.get_proxy_http(),
+                self.config_manager.get_port(),
+            )
+
+        bgmlist_data = await fetch_onair_data(session=self.session, proxy_url=proxy_url)
         if not bgmlist_data:
             logger.info("bgmlist API 不可用,跳过自动填充放送时间")
             return
 
         # 只取已订阅且 broadcast_time 为空的条目
-        subscribed = self.storage.get_monitored_subjects()
+        subscribed = storage.get_monitored_subjects()
         to_update: dict[str, str] = {}
         for subject in subscribed:
             subject_id = str(subject.subject_id)
@@ -198,7 +208,7 @@ class BangumiPlugin(Star):  # type: ignore[misc]
                 to_update[subject_id] = bgmlist_data[subject_id]
 
         if to_update:
-            updated = self.storage.batch_update_broadcast_times(to_update)
+            updated = storage.batch_update_broadcast_times(to_update)
             logger.info(f"自动填充 {updated}/{len(to_update)} 个番剧的放送时间")
 
     # --- 命令处理区 ---
