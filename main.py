@@ -214,7 +214,7 @@ class BangumiPlugin(Star):  # type: ignore[misc]
             updated = storage.batch_update_broadcast_times(to_update)
             action = "刷新" if overwrite else "填充"
             logger.info(f"批量{action} {updated}/{len(to_update)} 个番剧的放送时间")
-            return updated
+            return updated  # type: ignore[no-any-return]
         return 0
 
     # --- 命令处理区 ---
