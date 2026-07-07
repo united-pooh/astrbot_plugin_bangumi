@@ -173,14 +173,19 @@ class BangumiPlugin(Star):  # type: ignore[misc]
 
         logger.info("Bangumi 插件初始化流程结束")
 
-    async def _auto_fill_broadcast_times(self) -> None:
+    async def _auto_fill_broadcast_times(self, overwrite: bool = False) -> int:
         """
         从 bgmlist API 获取放送时间数据,填充到已订阅的番剧记录中。
-        仅填充 broadcast_time 为空的条目,已有值的不覆盖。
+
+        Args:
+            overwrite: 是否覆盖已有的 broadcast_time。False 时仅填充空值。
+
+        Returns:
+            更新成功的数量。
         """
         storage = getattr(self, "storage", None)
         if not storage:
-            return
+            return 0
 
         from contextlib import suppress
 
@@ -193,23 +198,24 @@ class BangumiPlugin(Star):  # type: ignore[misc]
 
         bgmlist_data = await fetch_onair_data(session=self.session, proxy_url=proxy_url)
         if not bgmlist_data:
-            logger.info("bgmlist API 不可用,跳过自动填充放送时间")
-            return
+            logger.info("bgmlist API 不可用,跳过填充放送时间")
+            return 0
 
-        # 只取已订阅且 broadcast_time 为空的条目
         subscribed = storage.get_monitored_subjects()
         to_update: dict[str, str] = {}
         for subject in subscribed:
             subject_id = str(subject.subject_id)
-            # 如果数据库中已设置 broadcast_time,不覆盖
-            if subject.broadcast_time:
+            if not overwrite and subject.broadcast_time:
                 continue
             if subject_id in bgmlist_data:
                 to_update[subject_id] = bgmlist_data[subject_id]
 
         if to_update:
             updated = storage.batch_update_broadcast_times(to_update)
-            logger.info(f"自动填充 {updated}/{len(to_update)} 个番剧的放送时间")
+            action = "刷新" if overwrite else "填充"
+            logger.info(f"批量{action} {updated}/{len(to_update)} 个番剧的放送时间")
+            return updated
+        return 0
 
     # --- 命令处理区 ---
 
@@ -278,6 +284,7 @@ class BangumiPlugin(Star):  # type: ignore[misc]
                 "/追番 <番剧名> - 订阅番剧更新",
                 "/弃坑 <番剧名/ID> - 取消本群订阅",
                 "/放送时间 [番剧名/ID] [HH:MM|清空] - 查看或设置精确放送时间",
+                "/刷新放送 - 从 bgmlist 手动刷新所有已订阅番剧的放送时间",
                 "/bgm模板 [序号|模板名] - 查看或切换图片卡片风格",
                 "/bgm help - 查看本帮助",
             ]
@@ -723,6 +730,20 @@ class BangumiPlugin(Star):  # type: ignore[misc]
             )
         else:
             yield event.plain_result("❌ 设置失败,未找到该番剧记录")
+
+    @filter.command("刷新放送")  # type: ignore[untyped-decorator]
+    async def refresh_broadcast(
+        self, event: AstrMessageEvent
+    ) -> AsyncGenerator[object, None]:
+        """从 bgmlist 手动刷新所有已订阅番剧的放送时间。"""
+        yield event.plain_result("🔄 正在刷新放送时间...")
+
+        updated = await self._auto_fill_broadcast_times(overwrite=True)
+        yield event.plain_result(
+            f"✅ 放送时间已刷新，更新了 {updated} 部番剧"
+            if updated
+            else "⚠️ 未找到可更新的放送时间数据（bgmlist 可能暂无数据）"
+        )
 
     async def terminate(self) -> None:
         logger.info("正在清理 Bangumi 插件资源...")
