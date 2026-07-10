@@ -88,6 +88,9 @@ class ConfigManager:
     def get_auto_translate_episode_summary(self) -> bool:
         return self._get_bool("auto_translate_episode_summary", False)
 
+    def get_broadcast_time_30h(self) -> bool:
+        return self._get_bool("broadcast_time_30h", True)
+
     def get_auto_translate_subject_summary(self) -> bool:
         return self._get_bool("auto_translate_subject_summary", False)
 

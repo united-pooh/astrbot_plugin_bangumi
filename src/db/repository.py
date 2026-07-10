@@ -236,6 +236,30 @@ class BangumiRepository:
         finally:
             session.close()
 
+    def get_subscribed_subjects(self, group_id: str) -> list[BangumiSubject]:
+        """ponytail: 返回群组订阅的 BangumiSubject 完整对象, 含 broadcast_weekday.
+        用于 /放送时间 表格展示(不再每次调 BGM calendar)."""
+        session = self.Session()
+        try:
+            sub_ids = [
+                sub.subject_id
+                for sub in session.query(Subscription)
+                .filter_by(group_id=str(group_id))
+                .all()
+            ]
+            if not sub_ids:
+                return []
+            return (
+                session.query(BangumiSubject)
+                .filter(BangumiSubject.subject_id.in_(sub_ids))
+                .all()
+            )
+        except Exception as e:
+            logger.error(f"获取订阅番剧对象失败: {e}")
+            raise DatabaseError(f"获取订阅番剧对象失败: {e}") from e
+        finally:
+            session.close()
+
     def get_monitored_subjects(self) -> list[BangumiSubject]:
         """
         获取所有已订阅的番剧列表,用于轮询更新
@@ -365,14 +389,18 @@ class BangumiRepository:
             session.close()
 
     def set_subject_broadcast_time(
-        self, subject_id: str, broadcast_time: str | None
+        self,
+        subject_id: str,
+        broadcast_time: str | None,
+        broadcast_weekday: int | None = None,
     ) -> bool:
         """
         设置番剧的广播时间
 
         Args:
             subject_id: 番剧 ID
-            broadcast_time: 播出时间,格式 "HH:MM",如 "22:00"。设为 None 清除
+            broadcast_time: 播出时间,格式 "HH:MM"(支持 30h 制),如 "22:00"、"24:28"。设为 None 清除
+            broadcast_weekday: ISO weekday 1-7 (周一=1); 设为 None 表示不变.
 
         Returns:
             操作是否成功
@@ -387,6 +415,8 @@ class BangumiRepository:
             if not subject:
                 return False
             subject.broadcast_time = broadcast_time
+            if broadcast_weekday is not None:
+                subject.broadcast_weekday = broadcast_weekday
             session.commit()
             return True
         except Exception as e:
@@ -422,12 +452,16 @@ class BangumiRepository:
         finally:
             session.close()
 
-    def batch_update_broadcast_times(self, mapping: dict[str, str]) -> int:
+    def batch_update_broadcast_times(
+        self, mapping: dict[str, str | tuple[str, int | None]]
+    ) -> int:
         """
         批量更新番剧广播时间(从 bgmlist API 填充用)
 
         Args:
-            mapping: {subject_id: broadcast_time} 映射,如 {"377130": "22:00"}
+            mapping: {subject_id: broadcast_time} 映射, 如 {"377130": "22:00"};
+                     也可传 {(time, weekday)} 元组形式同步写入 weekday,
+                     如 {"377130": ("24:28", 4)}.
 
         Returns:
             更新成功的数量
@@ -445,9 +479,16 @@ class BangumiRepository:
                 .all()
             )
             for subject in subjects:
-                if subject.subject_id in mapping:
-                    subject.broadcast_time = mapping[subject.subject_id]
-                    updated += 1
+                sid = subject.subject_id
+                if sid not in mapping:
+                    continue
+                value = mapping[sid]
+                if isinstance(value, tuple):
+                    subject.broadcast_time = value[0]
+                    subject.broadcast_weekday = value[1]
+                else:
+                    subject.broadcast_time = value
+                updated += 1
             session.commit()
             return updated
         except Exception as e:
