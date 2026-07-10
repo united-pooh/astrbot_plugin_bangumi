@@ -322,11 +322,22 @@ class SubscriptionService:
                     f"向群组 {group_id} 发送《{subject_name}》更新通知失败: {e}"
                 )
 
-    @staticmethod
-    def _resolve_notification_session(group_id: str) -> str:
+    def _resolve_notification_session(self, group_id: str) -> str:
+        # ponytail: aiocqhttp event payloads use lowercase 'group' as message_type,
+        # but AstrBot's MessageType enum (and context.send_message) expects
+        # CamelCase 'GroupMessage'. Platform id is user-configured (cmd_config
+        # platform.id), so enumerate the live PlatformManager to look it up;
+        # fall back to 'aiocqhttp' if Context is not yet wired.
         if group_id.count(":") >= 2:
             return group_id
-        return f"aiocqhttp:group:{group_id}"
+        if self.context is not None:
+            try:
+                for platform in self.context.platform_manager.platform_insts:
+                    if platform.meta().name == "aiocqhttp":
+                        return f"{platform.meta().id}:GroupMessage:{group_id}"
+            except Exception:
+                pass
+        return f"aiocqhttp:GroupMessage:{group_id}"
 
     async def _send_update_message(
         self, group_id: str, message_chain: MessageChain

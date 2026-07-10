@@ -183,8 +183,7 @@ class BangumiPlugin(Star):  # type: ignore[misc]
         Returns:
             更新成功的数量。
         """
-        storage = getattr(self, "storage", None)
-        if not storage:
+        if not self.storage:
             return 0
 
         from contextlib import suppress
@@ -201,7 +200,7 @@ class BangumiPlugin(Star):  # type: ignore[misc]
             logger.info("bgmlist API 不可用,跳过填充放送时间")
             return 0
 
-        subscribed = storage.get_monitored_subjects()
+        subscribed = self.storage.get_monitored_subjects()
         to_update: dict[str, str] = {}
         for subject in subscribed:
             subject_id = str(subject.subject_id)
@@ -211,10 +210,10 @@ class BangumiPlugin(Star):  # type: ignore[misc]
                 to_update[subject_id] = bgmlist_data[subject_id]
 
         if to_update:
-            updated = storage.batch_update_broadcast_times(to_update)
+            updated = self.storage.batch_update_broadcast_times(to_update)
             action = "刷新" if overwrite else "填充"
             logger.info(f"批量{action} {updated}/{len(to_update)} 个番剧的放送时间")
-            return updated  # type: ignore[no-any-return]
+            return updated
         return 0
 
     # --- 命令处理区 ---
@@ -744,6 +743,75 @@ class BangumiPlugin(Star):  # type: ignore[misc]
             if updated
             else "⚠️ 未找到可更新的放送时间数据（bgmlist 可能暂无数据）"
         )
+
+    @filter.command("放送测试")  # type: ignore[untyped-decorator]
+    async def broadcast_test(
+        self, event: AstrMessageEvent, name_or_id: str = ""
+    ) -> AsyncGenerator[object, None]:
+        """调试命令：模拟一次番剧更新通知，推送一条假消息到当前群。
+        用法:
+          /放送测试                  - 通用测试消息（仅验证 send_message）
+          /放送测试 <subject_id>    - 跑完整 check_updates 流程并推送
+                                       (临时把 current_episode-1, 触发"有更新"分支)
+        """
+        if not self.subscription_service:
+            yield event.plain_result("❌ 订阅服务未就绪")
+            return
+        group_id = self._resolve_session_key(event)
+        if not group_id:
+            yield event.plain_result("❌ 无法获取群组ID")
+            return
+
+        target_id = name_or_id.strip()
+        if not target_id:
+            chain = MessageChain().message(
+                f"🔧 [推送测试] 通用假消息 (group={group_id})"
+            )
+            try:
+                await self.subscription_service._send_update_message(group_id, chain)
+                yield event.plain_result("✅ 推送已尝试")
+            except Exception as e:
+                yield event.plain_result(f"❌ 推送失败: {e}")
+            return
+
+        if not self.storage:
+            yield event.plain_result("❌ 存储不可用")
+            return
+
+        subject_name = self.storage.get_subject_name(target_id)
+        if not subject_name:
+            yield event.plain_result(f"⚠️ 本地数据库未找到 subject_id={target_id}")
+            return
+
+        # ponytail: 临时把 current_episode 减 1, 强制 check_updates 进入
+        # "有新集数" 分支; 轮询完会自动 update_subject_episode 写回正确值。
+        subjects = self.storage.get_monitored_subjects()
+        target = next((s for s in subjects if str(s.subject_id) == target_id), None)
+        if not target:
+            yield event.plain_result(f"⚠️ {subject_name} 不在监控列表（未被订阅）")
+            return
+
+        original_ep = target.current_episode
+        if original_ep <= 0:
+            yield event.plain_result(
+                f"⚠️ {subject_name} current_episode=0 无法再减，"
+                f"请手动调高 BGM 真实集数后再测"
+            )
+            return
+
+        yield event.plain_result(
+            f"🔧 准备跑完整 check_updates 路径: "
+            f"《{subject_name}》 current_episode {original_ep} → {original_ep - 1}"
+        )
+        self.storage.update_subject_episode(target_id, original_ep - 1)
+        try:
+            await self.subscription_service.check_updates()
+            yield event.plain_result(
+                f"✅ check_updates 完成。请查看本群是否收到《{subject_name}》更新通知"
+            )
+        except Exception as e:
+            self.storage.update_subject_episode(target_id, original_ep)
+            yield event.plain_result(f"❌ check_updates 失败: {e}")
 
     async def terminate(self) -> None:
         logger.info("正在清理 Bangumi 插件资源...")
