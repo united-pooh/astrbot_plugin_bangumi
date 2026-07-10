@@ -214,7 +214,7 @@ class BangumiPlugin(Star):  # type: ignore[misc]
             return hhmm, wid
 
         subscribed = self.storage.get_monitored_subjects()
-        to_update: dict[str, tuple[str, int]] = {}
+        to_update: dict[str, str | tuple[str, int | None]] = {}
         for subject in subscribed:
             subject_id = str(subject.subject_id)
             # 仅当 time + weekday 都齐全才跳过; 否则即便 broadcast_time 已有也补上缺失的 weekday.
@@ -584,7 +584,10 @@ class BangumiPlugin(Star):  # type: ignore[misc]
                 group_id=group_id,
                 subject_id=candidates[0]["subject_id"],
             )
-            await self._auto_fill_broadcast_times()
+            try:
+                await self._auto_fill_broadcast_times()
+            except Exception:
+                logger.exception("订阅后自动填充放送时间失败")
             yield await self._result_for_text(event, result)
             return
 
@@ -638,7 +641,10 @@ class BangumiPlugin(Star):  # type: ignore[misc]
                 group_id=session_key,
                 subject_id=selected["subject_id"],
             )
-            await self._auto_fill_broadcast_times()
+            try:
+                await self._auto_fill_broadcast_times()
+            except Exception:
+                logger.exception("订阅后自动填充放送时间失败")
             await self._send_text(wait_event, result)
             wait_event.stop_event()
             controller.stop()
@@ -764,14 +770,14 @@ class BangumiPlugin(Star):  # type: ignore[misc]
         # 无 time 参数:查询
         if not time.strip():
             try:
-                bt = self.storage.get_subject_broadcast_time(subject_id)
+                bt = self.storage.get_subject_broadcast_time(subject_id)  # type: ignore[assignment]
             except Exception as e:
                 logger.error(f"获取广播时间失败: {e}")
                 yield event.plain_result("❌ 查询播出时间时出错")
                 return
             if bt:
                 yield event.plain_result(
-                    f"📺 《{subject.name}》播出时间: {bt} (CST)\n"
+                    f"📺 《{subject.name}》播出时间: {self._fmt_time_cfg(bt)} (CST)\n"
                     "可发送 `/放送时间 <番剧> HH:MM` 修改"
                 )
             else:
@@ -865,18 +871,30 @@ class BangumiPlugin(Star):  # type: ignore[misc]
             yield event.plain_result("❌ 存储不可用")
             return
 
-        subject_name = self.storage.get_subject_name(target_id)
-        if not subject_name:
-            yield event.plain_result(f"⚠️ 本地数据库未找到 subject_id={target_id}")
+        # ponytail: 直接查 monitored_subjects, 让 DB ID 匹配处理,
+        # 不再用 get_subject_name 当 gate (它返回 "未知番剧" 字符串掩盖真实错误).
+        monitored = self.storage.get_monitored_subjects()
+        target = next((s for s in monitored if str(s.subject_id) == target_id), None)
+        if not target:
+            # 可能是中文名; 在 monitored 里按 name 模糊匹配
+            candidates = [
+                s for s in monitored if target_id and target_id in (s.name or "")
+            ]
+            if len(candidates) == 1:
+                target = candidates[0]
+                target_id = str(target.subject_id)
+            elif len(candidates) > 1:
+                lines = ["⚠️ 匹配到多个番剧,请使用更精确名称或直接用 ID:"]
+                for idx, c in enumerate(candidates, 1):
+                    lines.append(f"  {idx}. {c.name} (ID: {c.subject_id})")
+                yield event.plain_result("\n".join(lines))
+                return
+
+        if not target:
+            yield event.plain_result(f"⚠️ {target_id} 不在本群订阅列表中")
             return
 
-        # ponytail: 临时把 current_episode 减 1, 强制 check_updates 进入
-        # "有新集数" 分支; 轮询完会自动 update_subject_episode 写回正确值。
-        subjects = self.storage.get_monitored_subjects()
-        target = next((s for s in subjects if str(s.subject_id) == target_id), None)
-        if not target:
-            yield event.plain_result(f"⚠️ {subject_name} 不在监控列表（未被订阅）")
-            return
+        subject_name = target.name or f"(ID:{target_id})"
 
         original_ep = target.current_episode
         if original_ep <= 0:

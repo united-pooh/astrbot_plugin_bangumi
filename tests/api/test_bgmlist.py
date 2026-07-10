@@ -5,9 +5,9 @@ from astrbot_plugin_bangumi.src.api import bgmlist
 
 
 def test_parse_broadcast_time_accepts_z_offset_and_naive_utc() -> None:
-    assert bgmlist._parse_broadcast_time("2026-04-06T14:00:00.000Z") == "22:00"
-    assert bgmlist._parse_broadcast_time("2026-04-06T23:30:00+09:00") == "22:30"
-    assert bgmlist._parse_broadcast_time("2026-04-06T14:00:00") == "22:00"
+    assert bgmlist._parse_broadcast_time("2026-04-06T14:00:00.000Z") == ("22:00", 1)
+    assert bgmlist._parse_broadcast_time("2026-04-06T23:30:00+09:00") == ("22:30", 1)
+    assert bgmlist._parse_broadcast_time("2026-04-06T14:00:00") == ("22:00", 1)
     assert bgmlist._parse_broadcast_time("bad") is None
 
 
@@ -34,7 +34,7 @@ async def test_fetch_onair_data_extracts_bangumi_ids_from_dict_items() -> None:
 
     result = await bgmlist.fetch_onair_data(session=session)
 
-    assert result == {"400602": "22:00"}
+    assert result == {"400602": ("22:00", 1)}
     assert session.calls[0][0] == (bgmlist.BGM_LIST_API,)
     assert isinstance(session.calls[0][1]["timeout"], aiohttp.ClientTimeout)
     assert session.calls[0][1]["headers"]["Accept"] == "application/json"
@@ -51,7 +51,7 @@ async def test_fetch_onair_data_accepts_list_payload_and_non_200() -> None:
         ]
     )
 
-    assert await bgmlist.fetch_onair_data(session=session) == {"123": "23:30"}
+    assert await bgmlist.fetch_onair_data(session=session) == {"123": ("23:30", 1)}
     assert await bgmlist.fetch_onair_data(session=_FakeSession({}, status=503)) is None
 
 
