@@ -95,6 +95,19 @@ class BangumiRepository:
                     )
                     conn.commit()
                     logger.info("数据库迁移:已添加 broadcast_weekday 列")
+            if not _has_column(engine, "bangumi_subjects", "broadcast_manual"):
+                from sqlalchemy import text
+
+                with engine.connect() as conn:
+                    conn.execute(
+                        text(
+                            "ALTER TABLE bangumi_subjects "
+                            "ADD COLUMN broadcast_manual BOOLEAN "
+                            "NOT NULL DEFAULT 0"
+                        )
+                    )
+                    conn.commit()
+                    logger.info("数据库迁移:已添加 broadcast_manual 列")
         except Exception as e:
             raise DatabaseError(f"数据库迁移失败: {e}") from e
 
@@ -429,6 +442,8 @@ class BangumiRepository:
             subject.broadcast_time = broadcast_time
             if broadcast_weekday is not None:
                 subject.broadcast_weekday = broadcast_weekday
+            # ponytail: 手动设值 / 清空都同步锁定位。空值即未锁定(让 bgmlist 重新填充)。
+            subject.broadcast_manual = broadcast_time is not None
             session.commit()
             return True
         except Exception as e:
@@ -493,6 +508,9 @@ class BangumiRepository:
             for subject in subjects:
                 sid = subject.subject_id
                 if sid not in mapping:
+                    continue
+                # ponytail: 手动锁定的不动, 让 /刷新放送 跳过用户手填的记录。
+                if getattr(subject, "broadcast_manual", False):
                     continue
                 value = mapping[sid]
                 if isinstance(value, tuple):

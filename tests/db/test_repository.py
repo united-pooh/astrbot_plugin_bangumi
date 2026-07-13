@@ -90,6 +90,31 @@ def test_broadcast_time_crud_and_batch_update(tmp_path: Path) -> None:
     assert repository.get_subject_name("missing") == "未知番剧"
 
 
+def test_manual_lock_blocks_batch_update_and_clears_on_reset(
+    tmp_path: Path,
+) -> None:
+    repository = _build_repository(tmp_path)
+    assert repository.subscribe_subject("group_1", "100", "Alpha")
+    assert repository.subscribe_subject("group_1", "200", "Beta")
+
+    assert repository.set_subject_broadcast_time("100", "22:00") is True
+    assert (
+        repository.batch_update_broadcast_times(
+            {"100": "23:30", "200": "18:00"}
+        )
+        == 1
+    )
+    assert repository.get_subject_broadcast_time("100") == "22:00"
+    assert repository.get_subject_broadcast_time("200") == "18:00"
+
+    assert repository.set_subject_broadcast_time("100", None) is True
+    assert (
+        repository.batch_update_broadcast_times({"100": "23:30"})
+        == 1
+    )
+    assert repository.get_subject_broadcast_time("100") == "23:30"
+
+
 def test_init_db_migrates_existing_database_with_missing_broadcast_time(
     tmp_path: Path,
 ) -> None:

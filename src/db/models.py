@@ -7,7 +7,7 @@
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, func
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, func
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -35,6 +35,9 @@ class BangumiSubject(Base):
     broadcast_weekday: Mapped[int | None] = mapped_column(
         Integer, nullable=True
     )  # 播出星期 1=周一..7=周日(ISO weekday)。与 broadcast_time 同时写入, 表格展示不再依赖 calendar API
+    broadcast_manual: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="0", nullable=False
+    )  # 手动锁定: True 时 /刷新放送 不覆盖。手动设值自动 True; 清空自动 False
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=func.now(), onupdate=func.now()
     )
