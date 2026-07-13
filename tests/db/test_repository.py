@@ -78,6 +78,9 @@ def test_broadcast_time_crud_and_batch_update(tmp_path: Path) -> None:
     assert repository.get_subject_broadcast_time("100") == "22:00"
     assert repository.set_subject_broadcast_time("missing", "23:00") is False
 
+    # 清空 100 解除手动锁定, 让 batch_update 能覆盖 (覆盖逻辑单独在 test_manual_lock_* 测).
+    assert repository.set_subject_broadcast_time("100", None) is True
+
     assert (
         repository.batch_update_broadcast_times(
             {"100": "23:30", "200": "18:00", "missing": "01:00"}
