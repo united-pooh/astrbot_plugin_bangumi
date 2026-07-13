@@ -769,8 +769,46 @@ class BangumiPlugin(Star):  # type: ignore[misc]
         subject = candidates[0]
         subject_id = str(subject.subject_id)
 
+        # ponytail: 3+ token 时用 event.message_str 自拆 (framework 切 2 个会丢).
+        weekday: int | None = None
+        time_str = time.strip()
+        weekday_map = {
+            "周一": 1,
+            "周二": 2,
+            "周三": 3,
+            "周四": 4,
+            "周五": 5,
+            "周六": 6,
+            "周日": 7,
+        }
+        time_pat = re.compile(r"^([01]\d|2[0-9]):([0-5]\d)$")
+        raw = event.message_str.strip()
+        for prefix in ("/放送时间", "放送时间"):
+            if raw.startswith(prefix):
+                raw = raw[len(prefix) :].lstrip()
+                break
+        full_tokens = raw.split()
+        # ponytail: 从尾部反向找第一个 HH:MM 作为 time, 它前一个 token 作为 weekday.
+        # 注意 QQ adapter 在 message_str 末尾会带 [MSG_ID:xxx] 这种后缀, 不能直接 [-1].
+        if len(full_tokens) >= 2:
+            for i in range(len(full_tokens) - 1, 0, -1):
+                if time_pat.match(full_tokens[i]):
+                    time_str = full_tokens[i]
+                    if i >= 2 and (
+                        full_tokens[i - 1] in weekday_map
+                        or (
+                            full_tokens[i - 1].isdigit()
+                            and 1 <= int(full_tokens[i - 1]) <= 7
+                        )
+                    ):
+                        prev = full_tokens[i - 1]
+                        weekday = (
+                            weekday_map.get(prev) if prev in weekday_map else int(prev)
+                        )
+                    break
+
         # 无 time 参数:查询
-        if not time and not time_str and len(full_tokens) <= 1:
+        if not time_str:
             try:
                 bt = self.storage.get_subject_broadcast_time(subject_id)  # type: ignore[assignment]
             except Exception as e:
@@ -791,29 +829,6 @@ class BangumiPlugin(Star):  # type: ignore[misc]
                     "可发送 `/放送时间 <番剧> HH:MM` 设置 (如 22:00)"
                 )
             return
-
-        # ponytail: 3+ token 时用 event.message_str 自拆 (framework 切 2 个会丢).
-        weekday: int | None = None
-        time_str = time.strip()
-        weekday_map = {"周一": 1, "周二": 2, "周三": 3, "周四": 4, "周五": 5, "周六": 6, "周日": 7}
-        time_pat = re.compile(r"^([01]\d|2[0-9]):([0-5]\d)$")
-        raw = event.message_str.strip()
-        for prefix in ("/放送时间", "放送时间"):
-            if raw.startswith(prefix):
-                raw = raw[len(prefix):].lstrip()
-                break
-        full_tokens = raw.split()
-        # ponytail: 从尾部反向找第一个 HH:MM 作为 time, 它前一个 token 作为 weekday.
-        # 注意 QQ adapter 在 message_str 末尾会带 [MSG_ID:xxx] 这种后缀, 不能直接 [-1].
-        if len(full_tokens) >= 2:
-            for i in range(len(full_tokens) - 1, 0, -1):
-                if time_pat.match(full_tokens[i]):
-                    time_str = full_tokens[i]
-                    if i >= 2 and (full_tokens[i - 1] in weekday_map or
-                                  (full_tokens[i - 1].isdigit() and 1 <= int(full_tokens[i - 1]) <= 7)):
-                        prev = full_tokens[i - 1]
-                        weekday = weekday_map.get(prev) if prev in weekday_map else int(prev)
-                    break
 
         # 清除
         if time_str in ("清空", "清除", "default"):
@@ -846,7 +861,11 @@ class BangumiPlugin(Star):  # type: ignore[misc]
             yield event.plain_result("❌ 设置播出时间时出错")
             return
         if ok:
-            wd_tag = f" 周{['一','二','三','四','五','六','日'][weekday-1]}" if weekday else ""
+            wd_tag = (
+                f" 周{['一', '二', '三', '四', '五', '六', '日'][weekday - 1]}"
+                if weekday
+                else ""
+            )
             yield event.plain_result(
                 f"✅ 已设置《{subject.name}》播出时间为 {time_str} (CST){wd_tag}"
             )

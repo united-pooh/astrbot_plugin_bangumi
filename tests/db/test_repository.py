@@ -99,19 +99,13 @@ def test_manual_lock_blocks_batch_update_and_clears_on_reset(
 
     assert repository.set_subject_broadcast_time("100", "22:00") is True
     assert (
-        repository.batch_update_broadcast_times(
-            {"100": "23:30", "200": "18:00"}
-        )
-        == 1
+        repository.batch_update_broadcast_times({"100": "23:30", "200": "18:00"}) == 1
     )
     assert repository.get_subject_broadcast_time("100") == "22:00"
     assert repository.get_subject_broadcast_time("200") == "18:00"
 
     assert repository.set_subject_broadcast_time("100", None) is True
-    assert (
-        repository.batch_update_broadcast_times({"100": "23:30"})
-        == 1
-    )
+    assert repository.batch_update_broadcast_times({"100": "23:30"}) == 1
     assert repository.get_subject_broadcast_time("100") == "23:30"
 
 
