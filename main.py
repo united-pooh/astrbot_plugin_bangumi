@@ -173,33 +173,70 @@ class BangumiPlugin(Star):  # type: ignore[misc]
 
         logger.info("Bangumi 插件初始化流程结束")
 
-    async def _auto_fill_broadcast_times(self) -> None:
+    async def _auto_fill_broadcast_times(self, overwrite: bool = False) -> int:
         """
         从 bgmlist API 获取放送时间数据,填充到已订阅的番剧记录中。
-        仅填充 broadcast_time 为空的条目,已有值的不覆盖。
+
+        Args:
+            overwrite: 是否覆盖已有的 broadcast_time。False 时仅填充空值。
+
+        Returns:
+            更新成功的数量。
         """
         if not self.storage:
-            return
+            return 0
 
-        bgmlist_data = await fetch_onair_data(session=self.session)
+        from contextlib import suppress
+
+        proxy_url: str | None = None
+        with suppress(RuntimeError, ValueError, TypeError):
+            proxy_url = self._build_proxy_url(
+                self.config_manager.get_proxy_http(),
+                self.config_manager.get_port(),
+            )
+
+        bgmlist_data = await fetch_onair_data(session=self.session, proxy_url=proxy_url)
         if not bgmlist_data:
-            logger.info("bgmlist API 不可用,跳过自动填充放送时间")
-            return
+            logger.info("bgmlist API 不可用,跳过填充放送时间")
+            return 0
 
-        # 只取已订阅且 broadcast_time 为空的条目
+        # ponytail: weekday 直接从 bgmlist 的 begin 字段拿 (CST isoweekday),
+        # 不再依赖 BGM calendar (calendar API 返回不稳定, 同一 subject
+        # 不同时刻可能给不同 wid). 深夜档 (hh<5) 视为前一日档期, hh+24, wid-1.
+        def _shift_late_night(hhmm: str, wid: int) -> tuple[str, int]:
+            try:
+                h, m = hhmm.split(":", 1)
+                hh = int(h)
+            except (ValueError, AttributeError):
+                return hhmm, wid
+            if hh < 5 and wid > 0:
+                return f"{hh + 24:02d}:{m}", wid - 1 or 7
+            return hhmm, wid
+
         subscribed = self.storage.get_monitored_subjects()
-        to_update: dict[str, str] = {}
+        to_update: dict[str, str | tuple[str, int | None]] = {}
         for subject in subscribed:
             subject_id = str(subject.subject_id)
-            # 如果数据库中已设置 broadcast_time,不覆盖
-            if subject.broadcast_time:
+            # 仅当 time + weekday 都齐全才跳过; 否则即便 broadcast_time 已有也补上缺失的 weekday.
+            if (
+                not overwrite
+                and subject.broadcast_time
+                and getattr(subject, "broadcast_weekday", None)
+            ):
                 continue
-            if subject_id in bgmlist_data:
-                to_update[subject_id] = bgmlist_data[subject_id]
+            raw = bgmlist_data.get(subject_id)
+            if not raw:
+                continue
+            hhmm, wid = raw
+            shifted, adj_wid = _shift_late_night(hhmm, wid)
+            to_update[subject_id] = (shifted, adj_wid)
 
         if to_update:
             updated = self.storage.batch_update_broadcast_times(to_update)
-            logger.info(f"自动填充 {updated}/{len(to_update)} 个番剧的放送时间")
+            action = "刷新" if overwrite else "填充"
+            logger.info(f"批量{action} {updated}/{len(to_update)} 个番剧的放送时间")
+            return updated
+        return 0
 
     # --- 命令处理区 ---
 
@@ -209,6 +246,52 @@ class BangumiPlugin(Star):  # type: ignore[misc]
         if hasattr(event, "message_obj") and hasattr(event.message_obj, "group_id"):
             session_key = event.message_obj.group_id
         return session_key
+
+    @staticmethod
+    def _time_to_min(t: str) -> int:
+        # ponytail: HH:MM -> minutes, 解析失败时返回 24*60 把无效值排到末尾
+        try:
+            h, m = t.split(":", 1)
+            return int(h) * 60 + int(m)
+        except (ValueError, AttributeError):
+            return 24 * 60
+
+    @staticmethod
+    def _fmt_time(bt: str | None) -> str:
+        # ponytail: 30h 制展示放送时间;00:00~23:59 显示原样,
+        # 24:00~29:59 显示为 24:00+ 以区分深夜档;
+        # 非 HH:MM 格式(未设置/解析失败)回退原值。
+        # 30h 显式关闭时不改变原值。
+        if not bt:
+            return "未设置"
+        try:
+            h, m = bt.split(":", 1)
+            hh = int(h)
+            mm = int(m)
+        except (ValueError, AttributeError):
+            return bt
+        if 0 <= hh <= 23 and 0 <= mm <= 59:
+            return bt
+        if 24 <= hh <= 29 and 0 <= mm <= 59:
+            return f"{hh:02d}:{mm:02d}"
+        return bt
+
+    def _fmt_time_cfg(self, bt: str | None) -> str:
+        # ponytail: 用户在插件设置里可关闭 30h 制 (broadcast_time_30h=false),
+        # 关闭后 24:28 显示为 00:28 (回落当日 24h 制)。
+        s = self._fmt_time(bt)
+        if (
+            self.config_manager
+            and not self.config_manager.get_broadcast_time_30h()
+            and bt
+        ):
+            try:
+                h, m = bt.split(":", 1)
+                if 24 <= int(h) <= 29:
+                    return f"{int(h) - 24:02d}:{m}"
+            except (ValueError, AttributeError):
+                pass
+        return s
 
     @staticmethod
     def _parse_subscribe_selection(raw_text: str) -> int | None:
@@ -268,6 +351,7 @@ class BangumiPlugin(Star):  # type: ignore[misc]
                 "/追番 <番剧名> - 订阅番剧更新",
                 "/弃坑 <番剧名/ID> - 取消本群订阅",
                 "/放送时间 [番剧名/ID] [HH:MM|清空] - 查看或设置精确放送时间",
+                "/刷新放送 - 从 bgmlist 手动刷新所有已订阅番剧的放送时间",
                 "/bgm模板 [序号|模板名] - 查看或切换图片卡片风格",
                 "/bgm help - 查看本帮助",
             ]
@@ -500,6 +584,10 @@ class BangumiPlugin(Star):  # type: ignore[misc]
                 group_id=group_id,
                 subject_id=candidates[0]["subject_id"],
             )
+            try:
+                await self._auto_fill_broadcast_times()
+            except Exception:
+                logger.exception("订阅后自动填充放送时间失败")
             yield await self._result_for_text(event, result)
             return
 
@@ -553,6 +641,10 @@ class BangumiPlugin(Star):  # type: ignore[misc]
                 group_id=session_key,
                 subject_id=selected["subject_id"],
             )
+            try:
+                await self._auto_fill_broadcast_times()
+            except Exception:
+                logger.exception("订阅后自动填充放送时间失败")
             await self._send_text(wait_event, result)
             wait_event.stop_event()
             controller.stop()
@@ -588,6 +680,8 @@ class BangumiPlugin(Star):  # type: ignore[misc]
     async def show_broadcast_time(
         self, event: AstrMessageEvent, name_or_id: str = "", time: str = ""
     ) -> AsyncGenerator[object, None]:
+        # ponytail: 签名兼容 <番> / <番> HH:MM 两个 token 路由 (framework 默认切).
+        # 3+ token 时 framework 会截断, 用 event.message_str 自拆.
         """查询或设置番剧的放送时间。
         用法:
         /放送时间                      - 显示本群所有已订阅番剧的放送时间
@@ -604,30 +698,47 @@ class BangumiPlugin(Star):  # type: ignore[misc]
             yield event.plain_result("❌ 无法获取群组ID")
             return
 
-        # 无参数:显示本群所有已订阅番剧的放送时间
+        # 无参数:按一周7天放送时间表展示本群订阅
         if not name_or_id.strip():
             try:
-                subject_ids = self.storage.get_subscriptions(group_id)
+                subjects = self.storage.get_subscribed_subjects(group_id)
             except Exception as e:
                 logger.error(f"获取订阅列表失败: {e}")
                 yield event.plain_result("❌ 查询订阅数据时出错,请稍后重试")
                 return
 
-            if not subject_ids:
+            if not subjects:
                 yield event.plain_result(
                     "📺 本群暂无订阅番剧\n发送 `/追番 <番剧名>` 来订阅吧"
                 )
                 return
 
-            lines = ["📺 本群已订阅番剧放送时间:"]
-            for sid in subject_ids:
-                try:
-                    bt = self.storage.get_subject_broadcast_time(sid)
-                except Exception:
-                    bt = None
-                name = self.storage.get_subject_name(sid)
-                time_str = bt or "未设置"
-                lines.append(f"  {name} (ID: {sid}) [{time_str}]")
+            # ponytail: weekday 直接读 DB (subscribe 时 _auto_fill 写入),
+            # 不再每次调 BGM calendar (避免缓存 stale / 调用失败导致显示错位).
+            weekday_names = ["", "周一", "周二", "周三", "周四", "周五", "周六", "周日"]
+            entries: list[tuple[int, str, str]] = []
+            for s in subjects:
+                wid = getattr(s, "broadcast_weekday", None) or 0
+                bt = s.broadcast_time or ""
+                time_key = bt if bt else "99:99"
+                day = weekday_names[wid] if wid else "未排期"
+                sort_key = (wid if wid else 8) * 10000 + self._time_to_min(time_key)
+                entries.append(
+                    (
+                        sort_key,
+                        day,
+                        f"{s.name or '(未知)'} (ID: {s.subject_id}) [{self._fmt_time_cfg(bt) if bt else '未设置'}]",
+                    )
+                )
+            entries.sort(key=lambda e: e[0])
+
+            lines = ["📺 本群订阅放送时间表:"]
+            current_day = None
+            for _, day, line in entries:
+                if day != current_day:
+                    lines.append(f"\n【{day}】")
+                    current_day = day
+                lines.append(f"  {line}")
             yield event.plain_result("\n".join(lines))
             return
 
@@ -649,25 +760,67 @@ class BangumiPlugin(Star):  # type: ignore[misc]
             lines = ["⚠️ 匹配到多个已订阅番剧,请提供更精确名称或直接使用 ID:"]
             for idx, subject in enumerate(candidates, start=1):
                 bt = subject.broadcast_time or "未设置"
-                lines.append(f"{idx}. {subject.name} (ID: {subject.subject_id}) [{bt}]")
+                lines.append(
+                    f"{idx}. {subject.name} (ID: {subject.subject_id}) [{self._fmt_time_cfg(bt)}]"
+                )
             yield event.plain_result("\n".join(lines))
             return
 
         subject = candidates[0]
         subject_id = str(subject.subject_id)
 
+        # ponytail: 3+ token 时用 event.message_str 自拆 (framework 切 2 个会丢).
+        weekday: int | None = None
+        time_str = time.strip()
+        weekday_map = {
+            "周一": 1,
+            "周二": 2,
+            "周三": 3,
+            "周四": 4,
+            "周五": 5,
+            "周六": 6,
+            "周日": 7,
+        }
+        time_pat = re.compile(r"^([01]\d|2[0-9]):([0-5]\d)$")
+        raw = event.message_str.strip()
+        for prefix in ("/放送时间", "放送时间"):
+            if raw.startswith(prefix):
+                raw = raw[len(prefix) :].lstrip()
+                break
+        full_tokens = raw.split()
+        # ponytail: 从尾部反向找第一个 HH:MM 作为 time, 它前一个 token 作为 weekday.
+        # 注意 QQ adapter 在 message_str 末尾会带 [MSG_ID:xxx] 这种后缀, 不能直接 [-1].
+        if len(full_tokens) >= 2:
+            for i in range(len(full_tokens) - 1, 0, -1):
+                if time_pat.match(full_tokens[i]):
+                    time_str = full_tokens[i]
+                    if i >= 2 and (
+                        full_tokens[i - 1] in weekday_map
+                        or (
+                            full_tokens[i - 1].isdigit()
+                            and 1 <= int(full_tokens[i - 1]) <= 7
+                        )
+                    ):
+                        prev = full_tokens[i - 1]
+                        weekday = (
+                            weekday_map.get(prev) if prev in weekday_map else int(prev)
+                        )
+                    break
+
         # 无 time 参数:查询
-        if not time.strip():
+        if not time_str:
             try:
-                bt = self.storage.get_subject_broadcast_time(subject_id)
+                bt = self.storage.get_subject_broadcast_time(subject_id)  # type: ignore[assignment]
             except Exception as e:
                 logger.error(f"获取广播时间失败: {e}")
                 yield event.plain_result("❌ 查询播出时间时出错")
                 return
+            locked = getattr(subject, "broadcast_manual", False)
+            lock_tag = "\n🔒 手动锁定,/刷新放送 不会覆盖" if locked else ""
             if bt:
                 yield event.plain_result(
-                    f"📺 《{subject.name}》播出时间: {bt} (CST)\n"
-                    "可发送 `/放送时间 <番剧> HH:MM` 修改"
+                    f"📺 《{subject.name}》播出时间: {self._fmt_time_cfg(bt)} (CST){lock_tag}\n"
+                    "可发送 `/放送时间 <番剧> HH:MM` 修改,带周几: `/放送时间 <番剧> 周三 22:00`"
                 )
             else:
                 yield event.plain_result(
@@ -677,40 +830,142 @@ class BangumiPlugin(Star):  # type: ignore[misc]
                 )
             return
 
-        time_str = time.strip()
-
         # 清除
         if time_str in ("清空", "清除", "default"):
             try:
                 self.storage.set_subject_broadcast_time(subject_id, None)
                 yield event.plain_result(
-                    f"✅ 已清除《{subject.name}》的播出时间设置\n将按当天0点触发通知"
+                    f"✅ 已清除《{subject.name}》的播出时间设置\n"
+                    "已解除手动锁定,/刷新放送 将重新填充\n"
+                    "将按当天0点触发通知"
                 )
             except Exception as e:
                 logger.error(f"清除广播时间失败: {e}")
                 yield event.plain_result("❌ 清除播出时间时出错")
             return
 
-        # 校验格式
-        time_pattern = re.compile(r"^([01]\d|2[0-3]):([0-5]\d)$")
+        # ponytail: 支持 30h 制, 00:00-29:59 (深夜档可用 24:00-29:59)
+        time_pattern = re.compile(r"^([01]\d|2[0-9]):([0-5]\d)$")
         if not time_pattern.match(time_str):
             yield event.plain_result(
-                "❌ 时间格式错误,请使用 HH:MM 格式(如 22:00、23:30)"
+                "❌ 时间格式错误,请使用 HH:MM 格式(如 22:00、24:28、29:59)"
             )
             return
 
         try:
-            ok = self.storage.set_subject_broadcast_time(subject_id, time_str)
+            ok = self.storage.set_subject_broadcast_time(
+                subject_id, time_str, broadcast_weekday=weekday
+            )
         except Exception as e:
             logger.error(f"设置广播时间失败: {e}")
             yield event.plain_result("❌ 设置播出时间时出错")
             return
         if ok:
+            wd_tag = (
+                f" 周{['一', '二', '三', '四', '五', '六', '日'][weekday - 1]}"
+                if weekday
+                else ""
+            )
             yield event.plain_result(
-                f"✅ 已设置《{subject.name}》播出时间为 {time_str} (CST)"
+                f"✅ 已设置《{subject.name}》播出时间为 {time_str} (CST){wd_tag}"
             )
         else:
             yield event.plain_result("❌ 设置失败,未找到该番剧记录")
+
+    @filter.command("刷新放送")  # type: ignore[untyped-decorator]
+    async def refresh_broadcast(
+        self, event: AstrMessageEvent
+    ) -> AsyncGenerator[object, None]:
+        """从 bgmlist 手动刷新所有已订阅番剧的放送时间。"""
+        yield event.plain_result("🔄 正在刷新放送时间...")
+
+        updated = await self._auto_fill_broadcast_times(overwrite=True)
+        yield event.plain_result(
+            f"✅ 放送时间已刷新，更新了 {updated} 部番剧"
+            if updated
+            else "⚠️ 未找到可更新的放送时间数据（bgmlist 可能暂无数据）"
+        )
+
+    @filter.command("放送测试")  # type: ignore[untyped-decorator]
+    async def broadcast_test(
+        self, event: AstrMessageEvent, name_or_id: str = ""
+    ) -> AsyncGenerator[object, None]:
+        """调试命令：模拟一次番剧更新通知，推送一条假消息到当前群。
+        用法:
+          /放送测试                  - 通用测试消息（仅验证 send_message）
+          /放送测试 <subject_id>    - 跑完整 check_updates 流程并推送
+                                       (临时把 current_episode-1, 触发"有更新"分支)
+        """
+        if not self.subscription_service:
+            yield event.plain_result("❌ 订阅服务未就绪")
+            return
+        group_id = self._resolve_session_key(event)
+        if not group_id:
+            yield event.plain_result("❌ 无法获取群组ID")
+            return
+
+        target_id = name_or_id.strip()
+        if not target_id:
+            chain = MessageChain().message(
+                f"🔧 [推送测试] 通用假消息 (group={group_id})"
+            )
+            try:
+                await self.subscription_service._send_update_message(group_id, chain)
+                yield event.plain_result("✅ 推送已尝试")
+            except Exception as e:
+                yield event.plain_result(f"❌ 推送失败: {e}")
+            return
+
+        if not self.storage:
+            yield event.plain_result("❌ 存储不可用")
+            return
+
+        # ponytail: 直接查 monitored_subjects, 让 DB ID 匹配处理,
+        # 不再用 get_subject_name 当 gate (它返回 "未知番剧" 字符串掩盖真实错误).
+        monitored = self.storage.get_monitored_subjects()
+        target = next((s for s in monitored if str(s.subject_id) == target_id), None)
+        if not target:
+            # 可能是中文名; 在 monitored 里按 name 模糊匹配
+            candidates = [
+                s for s in monitored if target_id and target_id in (s.name or "")
+            ]
+            if len(candidates) == 1:
+                target = candidates[0]
+                target_id = str(target.subject_id)
+            elif len(candidates) > 1:
+                lines = ["⚠️ 匹配到多个番剧,请使用更精确名称或直接用 ID:"]
+                for idx, c in enumerate(candidates, 1):
+                    lines.append(f"  {idx}. {c.name} (ID: {c.subject_id})")
+                yield event.plain_result("\n".join(lines))
+                return
+
+        if not target:
+            yield event.plain_result(f"⚠️ {target_id} 不在本群订阅列表中")
+            return
+
+        subject_name = target.name or f"(ID:{target_id})"
+
+        original_ep = target.current_episode
+        if original_ep <= 0:
+            yield event.plain_result(
+                f"⚠️ {subject_name} current_episode=0 无法再减，"
+                f"请手动调高 BGM 真实集数后再测"
+            )
+            return
+
+        yield event.plain_result(
+            f"🔧 准备跑完整 check_updates 路径: "
+            f"《{subject_name}》 current_episode {original_ep} → {original_ep - 1}"
+        )
+        self.storage.update_subject_episode(target_id, original_ep - 1)
+        try:
+            await self.subscription_service.check_updates()
+            yield event.plain_result(
+                f"✅ check_updates 完成。请查看本群是否收到《{subject_name}》更新通知"
+            )
+        except Exception as e:
+            self.storage.update_subject_episode(target_id, original_ep)
+            yield event.plain_result(f"❌ check_updates 失败: {e}")
 
     async def terminate(self) -> None:
         logger.info("正在清理 Bangumi 插件资源...")

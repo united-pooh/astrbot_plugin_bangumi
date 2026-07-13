@@ -39,6 +39,12 @@
     "min": 1,
     "max": 10
   },
+  "broadcast_time_30h": {
+    "description": "放送时间 30 小时制显示",
+    "type": "bool",
+    "hint": "启用后, 深夜档(00:00-05:59)会显示为 24:00-29:59 区分次日,例如 24:28 表示次日 00:28",
+    "default": true
+  },
   "render_server_url": {
     "description": "RPC 渲染服务器地址",
     "type": "string",

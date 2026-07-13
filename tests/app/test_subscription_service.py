@@ -173,7 +173,7 @@ async def test_notify_subscribers_passes_configured_episode_template(
         variant="pastel_lightbox",
     )
     context.send_message.assert_awaited_once()
-    assert context.send_message.await_args.args[0] == "aiocqhttp:group:group"
+    assert context.send_message.await_args.args[0] == "aiocqhttp:GroupMessage:group"
 
 
 @pytest.mark.asyncio
