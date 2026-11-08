@@ -4,19 +4,20 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-
 from astrbot_plugin_bangumi.src.render import ResponseRenderer
 
 bangumi_module = importlib.import_module("astrbot_plugin_bangumi.main")
 BangumiPlugin = bangumi_module.BangumiPlugin
 
 
-def test_resolve_session_key_prefers_group_id() -> None:
+def test_resolve_session_key_preserves_platform_and_message_type() -> None:
     event = SimpleNamespace(
-        session_id="session", message_obj=SimpleNamespace(group_id="group")
+        session_id="session",
+        message_obj=SimpleNamespace(group_id="group"),
+        unified_msg_origin="qq-main:GroupMessage:group",
     )
 
-    assert BangumiPlugin._resolve_session_key(event) == "group"
+    assert BangumiPlugin._resolve_session_key(event) == "qq-main:GroupMessage:group"
 
 
 def test_parse_subscribe_selection() -> None:
@@ -75,6 +76,10 @@ def test_build_bgm_help_text_lists_commands() -> None:
 def test_build_proxy_url_requires_host_and_port() -> None:
     assert BangumiPlugin._build_proxy_url("", "7890") is None
     assert BangumiPlugin._build_proxy_url("127.0.0.1", "") is None
+    assert (
+        BangumiPlugin._build_proxy_url("http://127.0.0.1:7890", "")
+        == "http://127.0.0.1:7890"
+    )
 
 
 def test_build_proxy_url_adds_default_scheme() -> None:
@@ -113,6 +118,7 @@ async def test_initialize_passes_single_proxy_url_to_render_chain(
     plugin.config_manager.get_access_token.return_value = "token"
     plugin.config_manager.get_user_agent.return_value = "agent"
     plugin.config_manager.get_render_mode.return_value = "pillow"
+    plugin.config_manager.get_max_retries.return_value = 3
     plugin.scheduler_manager = MagicMock()
     plugin._auto_fill_broadcast_times = AsyncMock()
 
@@ -159,6 +165,7 @@ async def test_initialize_passes_single_proxy_url_to_render_chain(
         user_agent="agent",
         proxy=proxy_url,
         session=session,
+        max_retries=3,
     )
     response_renderer_cls.assert_called_once_with(
         session=session, render_mode="pillow", proxy_url=proxy_url
@@ -183,7 +190,7 @@ async def test_result_for_text_keeps_short_plain_text() -> None:
 
 
 @pytest.mark.asyncio
-async def test_result_for_text_renders_long_text_as_image() -> None:
+async def test_result_for_text_keeps_long_text_copyable() -> None:
     plugin = BangumiPlugin.__new__(BangumiPlugin)
     plugin.config_manager = MagicMock()
     plugin.config_manager.get_episode_card_template.return_value = "pastel_lightbox"
@@ -195,9 +202,10 @@ async def test_result_for_text_renders_long_text_as_image() -> None:
 
     result = await BangumiPlugin._result_for_text(plugin, event, "长" * 31)
 
-    assert result == event.chain_result.call_args.args[0]
-    event.plain_result.assert_not_called()
-    event.chain_result.assert_called_once()
+    assert result == "长" * 31
+    event.plain_result.assert_called_once_with("长" * 31)
+    event.chain_result.assert_not_called()
+    plugin.response_renderer.render_response_text.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -372,13 +380,14 @@ async def test_subscribe_single_candidate_uses_subject_id() -> None:
 
     assert results == ["done"]
     plugin.subscription_service.subscribe_by_subject_id.assert_awaited_once_with(
-        group_id="group", subject_id="1"
+        group_id="qq-main:GroupMessage:group", subject_id="1"
     )
 
 
 def _event(group_id: str = "group") -> MagicMock:
     event = MagicMock()
     event.session_id = "session"
+    event.unified_msg_origin = f"qq-main:GroupMessage:{group_id}"
     event.message_obj = SimpleNamespace(group_id=group_id)
     event.plain_result = MagicMock(side_effect=lambda text: text)
     event.chain_result = MagicMock(side_effect=lambda chain: chain)

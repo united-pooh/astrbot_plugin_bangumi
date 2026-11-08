@@ -1,7 +1,7 @@
 <div align="center">
 
 # Bangumi 搜索插件使用指南
-[![version](https://img.shields.io/badge/version-v1.5.6-blue.svg)](https://github.com/united-pooh/astrbot_plugin_bangumi)
+[![version](https://img.shields.io/badge/version-v1.5.7-blue.svg)](https://github.com/united-pooh/astrbot_plugin_bangumi)
 [![License](https://img.shields.io/badge/license-Apache%202.0-green.svg)](LICENSE-2.0)
 [![AstrBot](https://img.shields.io/badge/AstrBot-%3E%3D4.26.2-orange.svg)](https://github.com/Soulter/AstrBot)
 [![Python](https://img.shields.io/badge/python-3.12%2B-blue.svg)](https://www.python.org/)
@@ -33,7 +33,7 @@
 | `/bgm电影` | `/bgm剧场版` 的别名 | `<关键词\|ID> [top_k]` | `/bgm电影 凉宫春日的消失` |
 | `/bgm漫画` | 仅搜索漫画条目 | `<关键词\|ID> [top_k]` | `/bgm漫画 迷宫饭` |
 
-> `top_k`(可选):返回结果数量,默认为 `1`
+> `top_k`(可选):返回结果数量,默认为 `1`,范围为 `1-10`。纯数字参数按条目 ID 查询;关键词按分类搜索。结果附条目链接,动画条目附可复制的追番命令。
 
 > 分类命令请使用连续形式,例如 `/bgm番剧 命运石之门`;不要在 `bgm` 和分类词之间加空格。
 
@@ -44,9 +44,16 @@
 | `/calendar` | 获取番剧放送表 | 无 | `/calendar` |
 | `/today` | 获取今日番剧更新 | 无 | `/today` |
 | `/追番` | 订阅番剧,更新时自动通知 | `<关键词\|ID>` | `/追番 进击的巨人` |
+| `/追番列表` | 查看当前会话追番进度、通知状态和下次检查时间 | 无 | `/追番列表` |
+| `/本群追番` | `/追番列表` 的别名 | 无 | `/本群追番` |
+| `/订阅列表` | `/追番列表` 的别名 | 无 | `/订阅列表` |
 | `/弃坑` | 取消订阅番剧 | `<关键词\|ID>` | `/弃坑 进击的巨人` |
 | `/bgm模板` | 查看或切换图片卡片风格 | `[1\|2\|3\|模板名]` | `/bgm模板 1` |
-| `/放送时间` | 查看所有已订阅番剧的放送时间,或查询/设置/清除指定番剧 | `[关键词\|ID] [HH:MM\|清空]` | `/放送时间` 查看全部，`/放送时间 尖帽子 22:00` 设置 |
+| `/放送时间` | 查看已订阅番剧的放送时间;管理员可设置或清除,对所有订阅群生效 | `[关键词\|ID] [HH:MM\|清空]` | `/放送时间` 查看全部，`/放送时间 尖帽子 22:00` 设置 |
+
+追番候选仅接受发起人的序号回复,5 分钟内有效。回复“取消”退出,普通聊天和其他群友的回复不会触发选择。通知按会话分别记录送达进度,失败的会话会在下一轮检查时重试,已送达的会话不会重复收到同一集。只有存在待发送通知时才下载封面。
+
+旧订阅数据会自动增加通知状态字段并保留原有进度。仅配置一个 OneBot 实例时可自动绑定旧群号;多个实例无法自动判断时,请在原群执行 `/追番列表` 绑定当前会话。放送时间为所有订阅群共享的番剧资料,仅机器人管理员可修改。
 
 
 **功能亮点**:
@@ -85,13 +92,13 @@
 |:-------|:----:|:------:|:-----|
 | `access_token` | string | 无 | Bangumi API 访问令牌(部分接口需授权)[¹](#access-token-获取) |
 | `user_agent` | string | 无 | 请求头 User-Agent 标识,为空时使用插件默认值 |
-| `max_fuzzy_results` | int | `5` | 模糊搜索最大返回数量(范围:1–200) |
+| `max_fuzzy_results` | int | `5` | 追番确认候选最大数量(范围:1–10) |
 | `proxy_http` | string | 无 | 代理主机或地址(例如 `192.168.0.1` 或 `http://127.0.0.1`;省略协议时按 `http://` 处理);启用后同时覆盖 Bangumi API、远程 RPC 渲染、本地 Playwright、Pillow 字体下载和 Pillow 图片下载 |
-| `port` | string | 无 | HTTP 代理端口(例如 `7890`;地址已带端口时仍需填写本项以启用代理) |
+| `port` | string | 无 | HTTP 代理端口(例如 `7890`;地址已带端口时可留空) |
 | `max_retries` | int | `3` | 网络错误最大重试次数(范围:1–10) |
 | `render_server_url` | string | `https://api.unitedpooh.top/rpc` | 远程渲染图片的 RPC 服务器地址 |
 | `render_mode` | string | `pillow` | 渲染模式;可选 `pillow`、`playwright`、`rpc`;旧配置值 `html` 会兼容为 `playwright` |
-| `episode_card_template` | string | `pastel_lightbox` | 图片卡片风格;影响 `/bgm` 搜索结果、单集更新和长文本响应;可选 `pastel_lightbox`、`editorial_digest`、`cinematic_poster`,第一个为默认 |
+| `episode_card_template` | string | `pastel_lightbox` | 图片卡片风格;影响 `/bgm` 搜索结果和单集更新;可选 `pastel_lightbox`、`editorial_digest`、`cinematic_poster`,第一个为默认 |
 | `auto_translate_episode_summary` | bool | `false` | 订阅更新渲染单集卡片前,使用 AstrBot 默认聊天模型将非空单集简介翻译为中文;无默认模型、返回空文本或翻译失败时保留原文 |
 | `auto_translate_subject_summary` | bool | `false` | `/bgm` 搜索结果渲染番剧卡片前,自动识别日文或中日混合简介并使用 AstrBot 默认聊天模型翻译为中文;纯中文简介会跳过,失败时保留原文 |
 
@@ -118,17 +125,17 @@
 python scripts/render_subject_variants.py
 ```
 
-生成结果会写入本地忽略目录 `rendered_images/subject-card-v1.5.6/`,用于用户审核前的可读性自检。
+生成结果会写入本地忽略目录 `rendered_images/subject-card-v1.5.7/`,用于用户审核前的可读性自检。
 
 ### 长文本响应卡片
 
-普通命令响应会按长度自动选择输出方式:30 字以内且不含换行时仍发送纯文字;超过 30 字或包含换行时会使用当前 `episode_card_template` 对应的三种风格之一渲染为图片。可用本地脚本生成真实数据预览图:
+帮助、候选列表、订阅结果和错误提示始终发送可复制的文字,不再按长度自动转图。长文本图片渲染器仍供本地预览使用,可用脚本生成示例:
 
 ```bash
 python scripts/render_response_previews.py
 ```
 
-生成结果会写入本地忽略目录 `rendered_images/response-card-v1.5.6/`,用于用户审核前的可读性自检。
+生成结果会写入本地忽略目录 `rendered_images/response-card-v1.5.7/`,用于用户审核前的可读性自检。
 
 ### 单集卡片预览
 

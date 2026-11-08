@@ -4,8 +4,6 @@ from pathlib import Path
 from unittest.mock import AsyncMock
 
 import pytest
-from PIL import Image, ImageDraw
-
 from astrbot_plugin_bangumi.src.render.episode_renderer import (
     DEFAULT_EPISODE_CARD_VARIANT,
     EPISODE_CARD_VARIANTS,
@@ -16,6 +14,7 @@ from astrbot_plugin_bangumi.tests.render.image_assertions import (
     assert_images_are_visually_distinct,
     assert_png_image,
 )
+from PIL import Image, ImageDraw
 
 EPISODE_SIZE = (2304, 3072)
 VARIANT_BRANCH_MARKUP = {

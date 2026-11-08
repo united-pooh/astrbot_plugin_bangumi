@@ -1,5 +1,4 @@
 import pytest
-
 from astrbot_plugin_bangumi.src.app.summary_translation import (
     summary_needs_chinese_translation,
 )

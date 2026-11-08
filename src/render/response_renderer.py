@@ -30,6 +30,9 @@ _CONTENT_LEFT = 150
 _CONTENT_RIGHT = _CARD_WIDTH - 150
 _MAX_RESPONSE_LINES = 30
 _ICON_REPLACEMENTS = {
+    "📚": "",
+    "📺": "",
+    "🔔": "提醒:",
     "⚠️": "注意:",
     "⚠": "注意:",
     "❌": "错误:",

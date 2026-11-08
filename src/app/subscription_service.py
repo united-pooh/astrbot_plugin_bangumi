@@ -1,8 +1,10 @@
+import datetime
 from typing import TYPE_CHECKING
 
 import aiohttp
 from astrbot.api import logger
 from astrbot.core.message.message_event_result import MessageChain
+from astrbot.core.platform.message_session import MessageSesion
 
 from ..config import ConfigManager
 from ..db import BangumiRepository
@@ -11,6 +13,7 @@ from ..domain.exceptions import BangumiApiError, DatabaseError, SubscriptionErro
 from ..domain.schemas import Episode
 from ..domain.types import ImageSize, SubjectType
 from ..render import EpisodeRenderer
+from .message_images import normalize_base64_image_for_send
 from .summary_translation import translate_text_to_chinese
 
 if TYPE_CHECKING:
@@ -33,6 +36,7 @@ class SubscriptionService:
         self.service = service
         self.config_manager = config_manager
         self.context = context
+        self.last_check_at: datetime.datetime | None = None
         self.renderer = EpisodeRenderer(
             session=session,
             render_mode=self.config_manager.get_render_mode(),
@@ -50,19 +54,23 @@ class SubscriptionService:
             return "❌ 请提供要订阅的番剧关键词或ID", []
 
         effective_limit = max(1, min(limit, 10))
-        search_res = await self.service.search_subjects(
-            keyword=normalized_keyword,
-            limit=effective_limit,
-            subject_type=[SubjectType.ANIME.value],
-            subject_tags=None,
-        )
+        try:
+            search_res = await self.service.search_subjects(
+                keyword=normalized_keyword,
+                limit=effective_limit,
+                subject_type=[SubjectType.ANIME.value],
+                subject_tags=None,
+            )
+        except BangumiApiError as exc:
+            logger.warning(f"查询追番候选失败: {exc}")
+            return "查询番剧失败,请稍后重试。", []
         raw_items = search_res.get("data", [])
         if not raw_items:
             return "🔍 未找到相关番剧", []
 
         candidates: list[SubscribeCandidate] = []
         seen: set[str] = set()
-        for item in raw_items:
+        for item in raw_items[:effective_limit]:
             subject_id_raw = item.get("id")
             if subject_id_raw is None:
                 continue
@@ -244,6 +252,10 @@ class SubscriptionService:
         对于设置了 broadcast_time 的番剧,仅在当前时间 >= broadcast_time
         (且 airdate 为当天)时才会触发通知,避免深夜番在凌晨就误发通知。
         """
+        self.last_check_at = datetime.datetime.now(
+            datetime.timezone(datetime.timedelta(hours=8))
+        )
+        self.migrate_legacy_sessions()
         subjects = self.storage.get_monitored_subjects()
         logger.info(f"开始更新 {len(subjects)} 个番剧的集数信息")
 
@@ -257,19 +269,6 @@ class SubscriptionService:
                 if not latest_episode:
                     continue
 
-                try:
-                    image_base64 = await self.service.get_subject_base64image(
-                        subject.subject_id, size=ImageSize.LARGE
-                    )
-                    if image_base64:
-                        latest_episode = latest_episode.model_copy(
-                            update={
-                                "image_url": f"data:image/png;base64,{image_base64}"
-                            }
-                        )
-                except BangumiApiError as e:
-                    logger.error(f"获取条目 {subject.name} 图片失败: {e}")
-
                 if latest_episode.ep > subject.current_episode:
                     logger.info(
                         f"番剧《{subject.name}》有更新: {subject.current_episode} -> {latest_episode.ep}"
@@ -279,11 +278,17 @@ class SubscriptionService:
                         str(subject.subject_id), latest_episode.ep
                     )
 
-                    await self._notify_subscribers(
-                        latest_episode, str(subject.subject_id), str(subject.name)
-                    )
+                await self._notify_subscribers(
+                    latest_episode, str(subject.subject_id), str(subject.name)
+                )
 
-            except (BangumiApiError, DatabaseError) as e:
+            except (
+                BangumiApiError,
+                DatabaseError,
+                TimeoutError,
+                RuntimeError,
+                ValueError,
+            ) as e:
                 logger.error(f"更新番剧《{subject.name}》失败: {e}")
 
     async def _notify_subscribers(
@@ -292,22 +297,37 @@ class SubscriptionService:
         """
         渲染并发送更新通知
         """
-        subscribed_groups = self.storage.get_subject_subscribers(subject_id)
+        subscribed_groups = self.storage.get_pending_subscribers(subject_id, episode.ep)
         if not subscribed_groups:
             return
 
+        try:
+            image_base64 = await self.service.get_subject_base64image(
+                subject_id, size=ImageSize.LARGE
+            )
+            if image_base64:
+                episode = episode.model_copy(
+                    update={"image_url": f"data:image/jpeg;base64,{image_base64}"}
+                )
+        except (BangumiApiError, TimeoutError) as exc:
+            logger.warning(f"获取《{subject_name}》封面失败,继续发送通知: {exc}")
+
         episode_for_render = await self._translate_episode_summary_if_enabled(episode)
 
-        base64_image = await self.renderer.render_episode(
-            episode_for_render,
-            rpc_url=self.config_manager.get_render_server_url(),
-            max_retries=self.config_manager.get_max_retries(),
-            variant=self.config_manager.get_episode_card_template(),
-        )
+        try:
+            base64_image = await self.renderer.render_episode(
+                episode_for_render,
+                rpc_url=self.config_manager.get_render_server_url(),
+                max_retries=self.config_manager.get_max_retries(),
+                variant=self.config_manager.get_episode_card_template(),
+            )
+        except Exception as exc:
+            logger.warning(f"更新卡片生成失败,改发文字: {exc}")
+            base64_image = None
 
         chain = MessageChain()
         if base64_image:
-            chain = chain.base64_image(base64_image)
+            chain = chain.base64_image(normalize_base64_image_for_send(base64_image))
         else:
             chain = chain.message(
                 f"🔔 番剧《{subject_name}》更新啦!\n第 {episode_for_render.ep} 集:{episode_for_render.name_cn or episode_for_render.name}"
@@ -316,17 +336,50 @@ class SubscriptionService:
         for group_id in subscribed_groups:
             try:
                 await self._send_update_message(group_id, chain)
+                self.storage.record_notification_result(
+                    group_id, subject_id, episode.ep
+                )
                 logger.info(f"向群组 {group_id} 发送《{subject_name}》更新通知成功")
             except Exception as e:
+                try:
+                    self.storage.record_notification_result(
+                        group_id, subject_id, episode.ep, error=str(e)
+                    )
+                except DatabaseError as storage_error:
+                    logger.error(f"保存失败通知状态出错: {storage_error}")
                 logger.error(
                     f"向群组 {group_id} 发送《{subject_name}》更新通知失败: {e}"
                 )
 
-    @staticmethod
-    def _resolve_notification_session(group_id: str) -> str:
+    def _resolve_notification_session(self, group_id: str) -> str:
         if group_id.count(":") >= 2:
-            return group_id
-        return f"aiocqhttp:group:{group_id}"
+            platform_id, message_type, session_id = group_id.split(":", 2)
+            message_type = "GroupMessage" if message_type == "group" else message_type
+            normalized = f"{platform_id}:{message_type}:{session_id}"
+            MessageSesion.from_str(normalized)
+            if platform_id != "aiocqhttp" or (
+                self.context is not None and self.context.get_platform_inst(platform_id)
+            ):
+                return normalized
+            group_id = session_id
+        if self.context is None:
+            raise RuntimeError("AstrBot Context 不可用")
+        platforms = [
+            platform
+            for platform in self.context.platform_manager.platform_insts
+            if platform.meta().name == "aiocqhttp"
+        ]
+        if len(platforms) != 1:
+            raise RuntimeError("旧订阅无法确定平台实例,请在原群使用 /追番列表 绑定会话")
+        return f"{platforms[0].meta().id}:GroupMessage:{group_id}"
+
+    def migrate_legacy_sessions(self) -> None:
+        for group_id in self.storage.get_all_subscribed_groups():
+            try:
+                resolved = self._resolve_notification_session(group_id)
+                self.storage.migrate_group_session(group_id, resolved)
+            except (RuntimeError, ValueError) as exc:
+                logger.warning(f"暂无法迁移旧订阅 {group_id}: {exc}")
 
     async def _send_update_message(
         self, group_id: str, message_chain: MessageChain

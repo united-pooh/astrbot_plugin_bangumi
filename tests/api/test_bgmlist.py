@@ -1,6 +1,5 @@
 import aiohttp
 import pytest
-
 from astrbot_plugin_bangumi.src.api import bgmlist
 
 

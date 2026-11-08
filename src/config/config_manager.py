@@ -60,7 +60,7 @@ class ConfigManager:
         return user_agent
 
     def get_max_fuzzy_results(self) -> int:
-        return self._get_int("max_fuzzy_results", 5)
+        return max(1, min(self._get_int("max_fuzzy_results", 5), 10))
 
     def get_proxy_http(self) -> str:
         return self._get_str("proxy_http", "")
@@ -69,7 +69,7 @@ class ConfigManager:
         return self._get_str("port", "")
 
     def get_max_retries(self) -> int:
-        return self._get_int("max_retries", 3)
+        return max(1, min(self._get_int("max_retries", 3), 10))
 
     def get_render_server_url(self) -> str:
         return self._get_str("render_server_url", "https://api.unitedpooh.top/rpc")

@@ -3,14 +3,13 @@ import io
 from unittest.mock import AsyncMock
 
 import pytest
-from PIL import Image
-
 from astrbot_plugin_bangumi.src.domain import EPISODE_CARD_VARIANTS
 from astrbot_plugin_bangumi.src.render.response_renderer import (
     ResponseRenderer,
     should_render_text_as_image,
 )
 from astrbot_plugin_bangumi.tests.render.image_assertions import assert_png_image
+from PIL import Image
 
 
 def test_should_render_text_as_image_uses_30_char_threshold() -> None:

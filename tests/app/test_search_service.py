@@ -3,7 +3,6 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from astrbot.api.event import AstrMessageEvent
-
 from astrbot_plugin_bangumi.src.app import SearchService
 from astrbot_plugin_bangumi.src.domain.exceptions import BangumiApiError
 

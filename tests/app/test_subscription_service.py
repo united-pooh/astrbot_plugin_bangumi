@@ -3,7 +3,6 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from astrbot.core.message.message_event_result import MessageChain
-
 from astrbot_plugin_bangumi.src.app import SubscriptionService
 from astrbot_plugin_bangumi.src.domain.exceptions import DatabaseError
 from astrbot_plugin_bangumi.src.domain.schemas import Episode
@@ -17,7 +16,7 @@ def mock_repo() -> MagicMock:
     repo.find_group_subscription_candidates = MagicMock(return_value=[])
     repo.get_monitored_subjects = MagicMock(return_value=[])
     repo.update_subject_episode = MagicMock()
-    repo.get_subject_subscribers = MagicMock(return_value=[])
+    repo.get_pending_subscribers = MagicMock(return_value=[])
     return repo
 
 
@@ -28,7 +27,7 @@ def mock_service() -> MagicMock:
     service.get_subject_details = AsyncMock()
     service.get_calendar = AsyncMock()
     service.get_latest_episode = AsyncMock()
-    service.get_subject_base64image = AsyncMock()
+    service.get_subject_base64image = AsyncMock(return_value=None)
     return service
 
 
@@ -155,7 +154,7 @@ async def test_notify_subscribers_passes_configured_episode_template(
     mock_service: MagicMock,
     mock_config_manager: MagicMock,
 ) -> None:
-    mock_repo.get_subject_subscribers.return_value = ["group"]
+    mock_repo.get_pending_subscribers.return_value = ["group"]
     mock_config_manager.get_episode_card_template.return_value = "pastel_lightbox"
     context = _context_with_provider()
     service = SubscriptionService(
@@ -173,7 +172,7 @@ async def test_notify_subscribers_passes_configured_episode_template(
         variant="pastel_lightbox",
     )
     context.send_message.assert_awaited_once()
-    assert context.send_message.await_args.args[0] == "aiocqhttp:group:group"
+    assert context.send_message.await_args.args[0] == "qq-main:GroupMessage:group"
 
 
 @pytest.mark.asyncio
@@ -182,7 +181,7 @@ async def test_notify_subscribers_translation_disabled_does_not_call_llm(
     mock_service: MagicMock,
     mock_config_manager: MagicMock,
 ) -> None:
-    mock_repo.get_subject_subscribers.return_value = ["group"]
+    mock_repo.get_pending_subscribers.return_value = ["group"]
     context = _context_with_provider()
     service = SubscriptionService(
         mock_repo, mock_service, mock_config_manager, context=context
@@ -205,7 +204,7 @@ async def test_notify_subscribers_translates_summary_before_rendering(
     mock_service: MagicMock,
     mock_config_manager: MagicMock,
 ) -> None:
-    mock_repo.get_subject_subscribers.return_value = ["group"]
+    mock_repo.get_pending_subscribers.return_value = ["group"]
     mock_config_manager.get_auto_translate_episode_summary.return_value = True
     context = _context_with_provider(completion_text="  中文简介  ")
     service = SubscriptionService(
@@ -233,7 +232,7 @@ async def test_notify_subscribers_keeps_original_summary_when_translation_fails(
     mock_service: MagicMock,
     mock_config_manager: MagicMock,
 ) -> None:
-    mock_repo.get_subject_subscribers.return_value = ["group"]
+    mock_repo.get_pending_subscribers.return_value = ["group"]
     mock_config_manager.get_auto_translate_episode_summary.return_value = True
     context = _context_with_provider()
     context.llm_generate.side_effect = RuntimeError("llm down")
@@ -261,15 +260,18 @@ async def test_send_update_message_accepts_existing_unified_message_origin(
     )
 
     await service._send_update_message(
-        "aiocqhttp:group:123456", MessageChain().message("ok")
+        "qq-main:GroupMessage:123456", MessageChain().message("ok")
     )
 
     context.send_message.assert_awaited_once()
-    assert context.send_message.await_args.args[0] == "aiocqhttp:group:123456"
+    assert context.send_message.await_args.args[0] == "qq-main:GroupMessage:123456"
 
 
 def _context_with_provider(completion_text: str = "中文简介") -> MagicMock:
     context = MagicMock()
+    platform = MagicMock()
+    platform.meta.return_value = SimpleNamespace(name="aiocqhttp", id="qq-main")
+    context.platform_manager.platform_insts = [platform]
     provider = MagicMock()
     provider.meta.return_value = SimpleNamespace(id="default-provider")
     context.get_using_provider.return_value = provider

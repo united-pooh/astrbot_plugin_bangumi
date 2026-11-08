@@ -12,23 +12,23 @@
     "default": ""
   },
   "max_fuzzy_results": {
-    "description": "模糊搜索返回的最大结果数量",
+    "description": "追番候选最大数量",
     "type": "int",
-    "hint": "取值范围1-200,数值越大返回结果越多",
+    "hint": "取值范围1-10,控制追番确认时的候选数量",
     "default": 5,
     "min": 1,
-    "max": 200
+    "max": 10
   },
   "proxy_http": {
     "description": "代理地址",
     "type": "string",
-    "hint": "IP, 例: 192.168.0.x",
+    "hint": "HTTP代理地址,如 http://127.0.0.1:7890;已含端口时无需再填端口",
     "default": ""
   },
   "port": {
     "description": "端口",
     "type": "string",
-    "hint": "代理端口, 例: 7890",
+    "hint": "代理地址未带端口时填写,例: 7890",
     "default": ""
   },
   "max_retries": {
@@ -55,7 +55,7 @@
   "episode_card_template": {
     "description": "图片卡片风格",
     "type": "string",
-    "hint": "用于 /bgm 搜索结果、单集更新卡片和长文本响应卡片；1=pastel_lightbox，2=editorial_digest，3=cinematic_poster；默认使用第 1 个粉彩模板",
+    "hint": "用于 /bgm 搜索结果和单集更新卡片；帮助、候选列表和操作提示保留文字；1=pastel_lightbox，2=editorial_digest，3=cinematic_poster",
     "default": "pastel_lightbox",
     "options": ["pastel_lightbox", "editorial_digest", "cinematic_poster"]
   },

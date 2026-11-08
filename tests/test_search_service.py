@@ -2,7 +2,6 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from astrbot.api.event import AstrMessageEvent
-
 from astrbot_plugin_bangumi.src.services import SearchService
 
 

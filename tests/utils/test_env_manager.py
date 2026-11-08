@@ -1,7 +1,6 @@
 from pathlib import Path
 
 import pytest
-
 from astrbot_plugin_bangumi.src.utils.env_manager import EnvManager
 
 

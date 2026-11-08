@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from difflib import SequenceMatcher
 
 from astrbot.api import logger
-from sqlalchemy import Engine, create_engine, or_
+from sqlalchemy import Engine, create_engine, or_, text
 from sqlalchemy.orm import joinedload, scoped_session, sessionmaker
 
 from ..domain.exceptions import DatabaseError
@@ -72,8 +72,6 @@ class BangumiRepository:
         """运行数据库迁移,为已有表添加新列"""
         try:
             if not _has_column(engine, "bangumi_subjects", "broadcast_time"):
-                from sqlalchemy import text
-
                 with engine.connect() as conn:
                     conn.execute(
                         text(
@@ -83,6 +81,29 @@ class BangumiRepository:
                     )
                     conn.commit()
                     logger.info("数据库迁移:已添加 broadcast_time 列")
+            if not _has_column(engine, "subscriptions", "last_notified_episode"):
+                with engine.begin() as conn:
+                    conn.execute(
+                        text(
+                            "ALTER TABLE subscriptions ADD COLUMN last_notified_episode "
+                            "INTEGER NOT NULL DEFAULT 0"
+                        )
+                    )
+                    # Preserve the old delivery baseline instead of replaying all episodes.
+                    conn.execute(
+                        text(
+                            "UPDATE subscriptions SET last_notified_episode = COALESCE("
+                            "(SELECT current_episode FROM bangumi_subjects "
+                            "WHERE bangumi_subjects.subject_id = subscriptions.subject_id), 0)"
+                        )
+                    )
+            if not _has_column(engine, "subscriptions", "notification_error"):
+                with engine.begin() as conn:
+                    conn.execute(
+                        text(
+                            "ALTER TABLE subscriptions ADD COLUMN notification_error VARCHAR"
+                        )
+                    )
         except Exception as e:
             raise DatabaseError(f"数据库迁移失败: {e}") from e
 
@@ -156,7 +177,9 @@ class BangumiRepository:
 
             if not existing:
                 new_sub = Subscription(
-                    group_id=str(group_id), subject_id=str(subject_id)
+                    group_id=str(group_id),
+                    subject_id=str(subject_id),
+                    last_notified_episode=subject.current_episode or 0,
                 )
                 session.add(new_sub)
 
@@ -328,7 +351,11 @@ class BangumiRepository:
             )
             if not existing:
                 session.add(
-                    Subscription(group_id=str(group_id), subject_id=str(subject_id))
+                    Subscription(
+                        group_id=str(group_id),
+                        subject_id=str(subject_id),
+                        last_notified_episode=subject.current_episode or 0,
+                    )
                 )
 
             # 3. 单次 commit,保证 subject 与 subscription 同时成功或同时回滚
@@ -361,6 +388,79 @@ class BangumiRepository:
         except Exception as e:
             logger.error(f"获取订阅群组失败: {e}")
             raise DatabaseError(f"获取订阅群组失败: {e}") from e
+        finally:
+            session.close()
+
+    def get_pending_subscribers(self, subject_id: str, episode: int) -> list[str]:
+        session = self.Session()
+        try:
+            rows = (
+                session.query(Subscription)
+                .filter(
+                    Subscription.subject_id == str(subject_id),
+                    Subscription.last_notified_episode < episode,
+                )
+                .all()
+            )
+            return [row.group_id for row in rows]
+        except Exception as exc:
+            raise DatabaseError(f"获取待通知订阅失败: {exc}") from exc
+        finally:
+            session.close()
+
+    def record_notification_result(
+        self, group_id: str, subject_id: str, episode: int, error: str | None = None
+    ) -> None:
+        session = self.Session()
+        try:
+            subscription = session.get(Subscription, (group_id, subject_id))
+            if subscription is None:
+                return
+            if error is None:
+                subscription.last_notified_episode = max(
+                    subscription.last_notified_episode, episode
+                )
+            subscription.notification_error = error[:500] if error else None
+            session.commit()
+        except Exception as exc:
+            session.rollback()
+            raise DatabaseError(f"保存通知状态失败: {exc}") from exc
+        finally:
+            session.close()
+
+    def get_group_subscription_records(self, group_id: str) -> list[Subscription]:
+        session = self.Session()
+        try:
+            return (
+                session.query(Subscription)
+                .options(joinedload(Subscription.subject))
+                .filter_by(group_id=group_id)
+                .order_by(Subscription.created_at)
+                .all()
+            )
+        except Exception as exc:
+            raise DatabaseError(f"获取追番列表失败: {exc}") from exc
+        finally:
+            session.close()
+
+    def migrate_group_session(self, old_key: str, new_key: str) -> None:
+        if old_key == new_key:
+            return
+        session = self.Session()
+        try:
+            for old in session.query(Subscription).filter_by(group_id=old_key).all():
+                existing = session.get(Subscription, (new_key, old.subject_id))
+                if existing is None:
+                    old.group_id = new_key
+                else:
+                    existing.last_notified_episode = max(
+                        existing.last_notified_episode, old.last_notified_episode
+                    )
+                    session.delete(old)
+            session.commit()
+        except Exception as exc:
+            session.rollback()
+            raise DatabaseError(f"迁移订阅会话失败: {exc}") from exc
         finally:
             session.close()
 

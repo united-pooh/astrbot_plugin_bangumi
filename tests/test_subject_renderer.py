@@ -4,8 +4,6 @@ import io
 from unittest.mock import AsyncMock
 
 import pytest
-from PIL import Image, ImageChops, ImageDraw
-
 from astrbot_plugin_bangumi.src.domain import EPISODE_CARD_VARIANTS
 from astrbot_plugin_bangumi.src.render import SubjectRenderer
 from astrbot_plugin_bangumi.src.render.pillow_utils import get_font, measure_text_block
@@ -21,6 +19,7 @@ from astrbot_plugin_bangumi.src.render.subject_renderer import (
     _parse_episode_list,
 )
 from astrbot_plugin_bangumi.tests.render.image_assertions import assert_png_image
+from PIL import Image, ImageChops, ImageDraw
 
 DATA_URI = (
     "data:image/png;base64,"

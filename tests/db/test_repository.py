@@ -2,7 +2,6 @@ import sqlite3
 from pathlib import Path
 
 import pytest
-
 from astrbot_plugin_bangumi.src.db import BangumiRepository
 from astrbot_plugin_bangumi.src.domain.exceptions import DatabaseError
 

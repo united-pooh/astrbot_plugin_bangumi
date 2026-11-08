@@ -1,7 +1,6 @@
 from unittest.mock import AsyncMock
 
 import pytest
-
 from astrbot_plugin_bangumi.src.utils.async_utils import retry
 
 

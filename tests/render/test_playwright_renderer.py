@@ -1,7 +1,6 @@
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-
 from astrbot_plugin_bangumi.src.render.base_renderer import BaseRenderer
 from astrbot_plugin_bangumi.src.render.calendar_renderer import CalendarRenderer
 from astrbot_plugin_bangumi.src.utils.browser import create_page

@@ -14,6 +14,7 @@ from ..domain.contracts import (
     SearchSubjectsResponse,
     SubjectDetailsResponse,
 )
+from ..domain.exceptions import BangumiApiError, NoSubjectFound
 from ..domain.schemas import Episode
 from ..domain.types import ImageSize
 from .base import BaseBangumiService
@@ -45,6 +46,22 @@ class SubjectsService(BaseBangumiService):
         subject_type: list[int] | None = None,
         subject_tags: list[str] | None = None,
     ) -> SearchSubjectsResponse:
+        keyword = keyword.strip()
+        limit = max(1, min(limit, 200))
+        offset = max(0, offset)
+        if keyword.isascii() and keyword.isdigit():
+            if offset:
+                return {"data": []}
+            try:
+                details = await self.get_subject_details(str(int(keyword)))
+            except NoSubjectFound:
+                return {"data": []}
+            if not details or (
+                subject_type is not None and details.get("type") not in subject_type
+            ):
+                return {"data": []}
+            return {"data": [cast(SearchSubjectItem, details)]}
+
         cache_key = self._search_cache_key(
             keyword=keyword,
             limit=limit,
@@ -59,8 +76,6 @@ class SubjectsService(BaseBangumiService):
         filters: dict[str, JsonValue] = {}
         json_data: JsonObject = {
             "keyword": keyword,
-            "limit": limit,
-            "offset": offset,
             "filter": filters,
         }
         if subject_type is not None:
@@ -70,6 +85,7 @@ class SubjectsService(BaseBangumiService):
         data = await self._request(
             url,
             method="POST",
+            params={"limit": limit, "offset": offset},
             json_data=json_data,
         )
         if isinstance(data, dict):
@@ -139,17 +155,42 @@ class SubjectsService(BaseBangumiService):
             total: 总集数
         """
         url = f"{self.base_url}/v0/episodes"
-        params = {"subject_id": subject_id}
-        data = await self._request(url, params=params)
-        if isinstance(data, dict):
+        normalized: EpisodeListResponse = {"data": []}
+        offset = 0
+        page_size = 100
+        seen_ids: set[int] = set()
+        while True:
+            data = await self._request(
+                url,
+                params={"subject_id": subject_id, "limit": page_size, "offset": offset},
+            )
+            if not isinstance(data, dict):
+                raise BangumiApiError("剧集接口返回格式异常")
             raw_items = data.get("data")
-            if isinstance(raw_items, list):
-                normalized: EpisodeListResponse = {"data": []}
-                for item in raw_items:
-                    if isinstance(item, dict):
-                        normalized["data"].append(cast(EpisodeItem, item))
+            if not isinstance(raw_items, list):
+                raise BangumiApiError("剧集接口缺少 data 列表")
+            if not raw_items:
                 return normalized
-        return {"data": []}
+            added = 0
+            for item in raw_items:
+                if not isinstance(item, dict):
+                    continue
+                episode_id = item.get("id")
+                if isinstance(episode_id, int):
+                    if episode_id in seen_ids:
+                        continue
+                    seen_ids.add(episode_id)
+                normalized["data"].append(cast(EpisodeItem, item))
+                added += 1
+            offset += len(raw_items)
+            total = data.get("total")
+            if isinstance(total, int):
+                if offset >= total:
+                    return normalized
+            elif len(raw_items) < page_size:
+                return normalized
+            if not added:
+                raise BangumiApiError("剧集接口分页未前进,请稍后重试")
 
     async def get_latest_episode(
         self, subject_id: int, broadcast_time: str | None = None
@@ -178,8 +219,10 @@ class SubjectsService(BaseBangumiService):
         today = now.date()
 
         # 逆序查找:从最后一集向前找第一个符合条件的
-        for episode in reversed(episodes):
-            if episode.ep == 0:
+        for episode in sorted(
+            episodes, key=lambda item: (item.ep, item.sort), reverse=True
+        ):
+            if episode.ep == 0 or episode.type != 0:
                 continue
 
             # 检查播出状态

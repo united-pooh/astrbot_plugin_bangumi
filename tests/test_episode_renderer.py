@@ -1,5 +1,4 @@
 import pytest
-
 from astrbot_plugin_bangumi.src.render import EpisodeRenderer
 from astrbot_plugin_bangumi.src.services.schemas import Episode
 from astrbot_plugin_bangumi.tests.render.image_assertions import assert_png_image

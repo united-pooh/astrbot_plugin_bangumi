@@ -1,5 +1,4 @@
 import pytest
-
 from astrbot_plugin_bangumi.src.render import (
     CalendarRenderer,
     EpisodeRenderer,

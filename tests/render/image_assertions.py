@@ -4,9 +4,8 @@ import base64
 import io
 from collections.abc import Sequence
 
-from PIL import Image, ImageChops, ImageStat
-
 from astrbot_plugin_bangumi.src.render.pillow_utils import is_visually_blank
+from PIL import Image, ImageChops, ImageStat
 
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 

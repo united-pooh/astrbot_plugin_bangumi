@@ -1,7 +1,6 @@
 from unittest.mock import AsyncMock
 
 import pytest
-
 from astrbot_plugin_bangumi.src.domain.schemas import Episode
 from astrbot_plugin_bangumi.src.render import EpisodeRenderer, SubjectRenderer
 from astrbot_plugin_bangumi.tests.render.image_assertions import assert_png_image

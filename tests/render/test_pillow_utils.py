@@ -5,8 +5,6 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
-from PIL import Image, ImageDraw
-
 from astrbot_plugin_bangumi.src.render import (
     calendar_renderer,
     episode_renderer,
@@ -31,6 +29,7 @@ from astrbot_plugin_bangumi.src.render.pillow_utils import (
     wrap_text,
 )
 from astrbot_plugin_bangumi.src.render.subject_renderer import SubjectRenderer
+from PIL import Image, ImageDraw
 
 
 def test_is_visually_blank_detects_white_and_transparent_images() -> None:

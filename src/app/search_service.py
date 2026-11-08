@@ -17,6 +17,7 @@ from ..domain.contracts import (
 )
 from ..domain.exceptions import BangumiApiError
 from ..render import CalendarRenderer, SubjectRenderer
+from .message_images import image_component_from_base64
 from .summary_translation import (
     summary_needs_chinese_translation,
     translate_text_to_chinese,
@@ -67,27 +68,53 @@ class SearchService:
         """
         处理条目搜索的核心流程:搜索 -> 渲染 (Base64) -> 发送
         """
+        query = query.strip()
         if not query:
             yield await self._text_result(event, "❌ 请提供搜索关键词")
+            return
+
+        if top_k < 1 or top_k > 10:
+            yield await self._text_result(event, "结果数量请填写 1-10。")
             return
 
         logger.info(f"搜索请求: {query}, type={subject_type}, top_k={top_k}")
 
         try:
             search_res = await self.service.search_subjects(
-                keyword=query, subject_type=subject_type, subject_tags=subject_tags
+                keyword=query,
+                limit=top_k,
+                subject_type=subject_type,
+                subject_tags=subject_tags,
             )
             if not search_res or "data" not in search_res or not search_res["data"]:
                 yield await self._text_result(event, "🔍 未找到相关条目")
                 return
 
-            image_components = await self._prepare_subject_images_base64(
-                search_res["data"], top_k
-            )
+            selected = search_res["data"][:top_k]
+            links = []
+            for item in selected:
+                subject_id = item.get("id")
+                if not subject_id:
+                    continue
+                name = item.get("name_cn") or item.get("name") or str(subject_id)
+                lines = [str(name), f"https://bgm.tv/subject/{subject_id}"]
+                if item.get("type") == 2:
+                    lines.append(f"追番: /追番 {subject_id}")
+                links.append("\n".join(lines))
+
+            try:
+                image_components = await self._prepare_subject_images_base64(
+                    selected, top_k
+                )
+            except (BangumiApiError, RuntimeError, ValueError, TimeoutError) as exc:
+                logger.warning(f"条目卡片生成失败,保留文字结果: {exc}")
+                image_components = []
 
             if image_components:
                 yield event.chain_result(image_components)
-            else:
+            if links:
+                yield event.plain_result("\n\n".join(links))
+            elif not image_components:
                 yield await self._text_result(event, "❌ 未能生成渲染图片")
 
         except (BangumiApiError, RuntimeError, ValueError) as e:
@@ -113,7 +140,7 @@ class SearchService:
             )
 
             if base64_image:
-                yield event.chain_result([Comp.Image.fromBase64(base64_image)])
+                yield event.chain_result([image_component_from_base64(base64_image)])
             else:
                 yield await self._text_result(event, "❌ 图片生成失败")
         except (BangumiApiError, RuntimeError, ValueError) as e:
@@ -144,7 +171,7 @@ class SearchService:
             )
 
             if base64_image:
-                yield event.chain_result([Comp.Image.fromBase64(base64_image)])
+                yield event.chain_result([image_component_from_base64(base64_image)])
             else:
                 yield await self._text_result(event, "❌ 图片生成失败")
         except (BangumiApiError, RuntimeError, ValueError) as e:
@@ -205,7 +232,7 @@ class SearchService:
             variant=self.config_manager.get_episode_card_template(),
         )
 
-        return [Comp.Image.fromBase64(b64) for b64 in base64_list]
+        return [image_component_from_base64(b64) for b64 in base64_list]
 
     async def _translate_subject_summary_if_enabled(
         self, subject_data: SubjectDetailsResponse

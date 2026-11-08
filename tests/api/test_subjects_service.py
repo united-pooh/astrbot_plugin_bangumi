@@ -1,7 +1,6 @@
 import datetime
 
 import pytest
-
 from astrbot_plugin_bangumi.src.api import SubjectsService
 from astrbot_plugin_bangumi.src.api import subjects as subjects_module
 from astrbot_plugin_bangumi.src.domain.types import ImageSize

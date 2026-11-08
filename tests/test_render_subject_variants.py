@@ -8,9 +8,8 @@ from pathlib import Path
 from types import ModuleType
 
 import pytest
-from PIL import Image
-
 from astrbot_plugin_bangumi.src.render import SubjectRenderer
+from PIL import Image
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SCRIPT_PATH = REPO_ROOT / "scripts" / "render_subject_variants.py"
@@ -86,7 +85,7 @@ async def test_render_previews_outputs_all_variants(
         user_agent="test-agent",
     )
 
-    assert report["version"] == "v1.5.6"
+    assert report["version"] == "v1.5.7"
     assert report["subject_id"] == "123"
     assert [item["variant"] for item in report["previews"]] == [
         "pastel_lightbox",

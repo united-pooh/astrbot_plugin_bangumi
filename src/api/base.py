@@ -104,7 +104,7 @@ class BaseBangumiService:
                         return await self._handle_response(response, is_json=True)
                     return await self._handle_response(response, is_json=False)
 
-            except aiohttp.ClientError as e:
+            except (aiohttp.ClientError, TimeoutError) as e:
                 logger.warning(f"网络请求失败 (第 {attempt} 次): {e}")
                 last_exception = e
                 if attempt < self.max_retries:

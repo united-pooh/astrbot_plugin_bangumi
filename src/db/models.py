@@ -28,7 +28,7 @@ class BangumiSubject(Base):
     total_episodes: Mapped[int] = mapped_column(Integer, default=0)
     current_episode: Mapped[int] = mapped_column(
         Integer, default=0
-    )  # 当前已更新/已通知集数
+    )  # Latest observed episode; delivery state belongs to each subscription.
     broadcast_time: Mapped[str | None] = mapped_column(
         String, nullable=True
     )  # 播出时间,格式: HH:MM,如 "22:00"。从 bgmlist API 自动填充或手动设置
@@ -60,6 +60,8 @@ class Subscription(Base):
         String, ForeignKey("bangumi_subjects.subject_id"), primary_key=True
     )
     created_at: Mapped[datetime] = mapped_column(DateTime, default=func.now())
+    last_notified_episode: Mapped[int] = mapped_column(Integer, default=0)
+    notification_error: Mapped[str | None] = mapped_column(String, nullable=True)
 
     # 建立与 BangumiSubject 的多对一关系
     subject: Mapped[BangumiSubject] = relationship(back_populates="subscriptions")

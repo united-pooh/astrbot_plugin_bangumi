@@ -1,7 +1,6 @@
 from unittest.mock import AsyncMock
 
 import pytest
-
 from astrbot_plugin_bangumi.src.render import SubjectRenderer
 from astrbot_plugin_bangumi.tests.test_subject_renderer import build_subject_data
 

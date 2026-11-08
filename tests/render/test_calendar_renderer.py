@@ -2,7 +2,6 @@ from datetime import datetime
 from unittest.mock import AsyncMock
 
 import pytest
-
 from astrbot_plugin_bangumi.src.render import calendar_renderer
 from astrbot_plugin_bangumi.src.render.calendar_renderer import (
     CalendarRenderer,

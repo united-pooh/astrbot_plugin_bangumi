@@ -1,7 +1,9 @@
+import asyncio
 import copy
-import os
+import json
 import re
 from collections.abc import AsyncGenerator
+from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
 
 import aiohttp
@@ -30,8 +32,8 @@ from .src.domain import (
     EpisodeCardVariant,
     SubjectType,
 )
+from .src.domain.exceptions import DatabaseError
 from .src.render import ResponseRenderer
-from .src.render.response_renderer import should_render_text_as_image
 from .src.utils import EnvManager, SchedulerManager
 
 EPISODE_CARD_TEMPLATE_LABELS: dict[EpisodeCardVariant, str] = {
@@ -81,6 +83,7 @@ class BangumiPlugin(Star):  # type: ignore[misc]
         self.search_service: SearchService | None = None
         self.response_renderer: ResponseRenderer | None = None
         self.env_manager: EnvManager | None = None
+        self._update_job_id: str | None = None
 
     async def initialize(self) -> None:
         """
@@ -91,9 +94,9 @@ class BangumiPlugin(Star):  # type: ignore[misc]
 
         # 1. 初始化数据库
         try:
-            db_path = os.path.join(plugin_data_dir, "data.db")
-            self.storage = BangumiRepository(db_path=db_path)
-        except (OSError, RuntimeError, ValueError, TypeError) as e:
+            db_path = Path(plugin_data_dir) / "data.db"
+            self.storage = BangumiRepository(db_path=str(db_path))
+        except (DatabaseError, OSError, RuntimeError, ValueError, TypeError) as e:
             logger.error(f"数据库初始化失败: {e}")
 
         # 2. 初始化网络会话 (Shared Session)
@@ -112,6 +115,7 @@ class BangumiPlugin(Star):  # type: ignore[misc]
                 user_agent=self.config_manager.get_user_agent(),
                 proxy=proxy_url,
                 session=self.session,
+                max_retries=self.config_manager.get_max_retries(),
             )
         except (RuntimeError, ValueError, TypeError) as e:
             logger.error(f"服务初始化失败: {e}")
@@ -155,7 +159,7 @@ class BangumiPlugin(Star):  # type: ignore[misc]
         # 添加定时更新任务(每15分钟检查一次,配合 broadcast_time 精确触发)
         if self.subscription_service:
             try:
-                self.scheduler_manager.add_job(
+                self._update_job_id = self.scheduler_manager.add_job(
                     func=self.subscription_service.check_updates,
                     trigger="cron",
                     minute="*/15",
@@ -205,9 +209,23 @@ class BangumiPlugin(Star):  # type: ignore[misc]
 
     @staticmethod
     def _resolve_session_key(event: AstrMessageEvent) -> str | None:
-        session_key: str | None = getattr(event, "session_id", None)
-        if hasattr(event, "message_obj") and hasattr(event.message_obj, "group_id"):
-            session_key = event.message_obj.group_id
+        session_key = getattr(event, "unified_msg_origin", None)
+        return session_key if isinstance(session_key, str) and session_key else None
+
+    def _subscription_session_key(self, event: AstrMessageEvent) -> str | None:
+        session_key = self._resolve_session_key(event)
+        storage = getattr(self, "storage", None)
+        if session_key and storage and event.get_platform_name() == "aiocqhttp":
+            legacy_group = event.get_group_id()
+            if legacy_group:
+                try:
+                    storage.migrate_group_session(legacy_group, session_key)
+                    storage.migrate_group_session(
+                        f"aiocqhttp:group:{legacy_group}", session_key
+                    )
+                except DatabaseError as exc:
+                    logger.error(f"迁移当前群订阅失败: {exc}")
+                    return None
         return session_key
 
     @staticmethod
@@ -266,50 +284,26 @@ class BangumiPlugin(Star):  # type: ignore[misc]
                 "/calendar - 查看每日放送表",
                 "/today - 查看今日更新",
                 "/追番 <番剧名> - 订阅番剧更新",
+                "/追番列表 - 查看本群进度、通知状态和下次检查时间",
+                "/bgm <ID> 或 /追番 <ID> - 直接使用条目 ID",
                 "/弃坑 <番剧名/ID> - 取消本群订阅",
-                "/放送时间 [番剧名/ID] [HH:MM|清空] - 查看或设置精确放送时间",
+                "/放送时间 [番剧名/ID] [HH:MM|清空] - 查看放送时间;修改需管理员,全局生效",
                 "/bgm模板 [序号|模板名] - 查看或切换图片卡片风格",
                 "/bgm help - 查看本帮助",
             ]
         )
 
-    async def _render_response_text_base64(self, text: str) -> str | None:
-        response_renderer = getattr(self, "response_renderer", None)
-        if not isinstance(response_renderer, ResponseRenderer):
-            return None
-        try:
-            return await response_renderer.render_response_text(
-                text,
-                variant=self.config_manager.get_episode_card_template(),
-                rpc_url=self.config_manager.get_render_server_url(),
-                max_retries=self.config_manager.get_max_retries(),
-            )
-        except Exception as exc:
-            logger.warning(f"[-] 长文本响应图片渲染失败,回退纯文字: {exc}")
-            return None
-
     async def _result_for_text(self, event: AstrMessageEvent, text: str) -> object:
-        if not should_render_text_as_image(text):
-            return event.plain_result(text)
-
-        base64_image = await self._render_response_text_base64(text)
-        if base64_image:
-            return event.chain_result([Comp.Image.fromBase64(base64_image)])
         return event.plain_result(text)
 
     async def _send_text(self, event: AstrMessageEvent, text: str) -> None:
-        if should_render_text_as_image(text):
-            base64_image = await self._render_response_text_base64(text)
-            if base64_image:
-                await event.send(MessageChain([Comp.Image.fromBase64(base64_image)]))
-                return
         await event.send(MessageChain([Comp.Plain(text)]))
 
     @staticmethod
     def _build_proxy_url(proxy_host: str, proxy_port: str) -> str | None:
         host = proxy_host.strip()
         port = proxy_port.strip()
-        if not host or not port:
+        if not host:
             return None
 
         parsed = urlsplit(host if "://" in host else f"//{host}")
@@ -321,6 +315,8 @@ class BangumiPlugin(Star):  # type: ignore[misc]
         host_part = netloc.rsplit("@", maxsplit=1)[-1]
         has_port = "]:" in host_part if host_part.startswith("[") else ":" in host_part
         if not has_port:
+            if not port:
+                return None
             netloc = f"{netloc}:{port}"
 
         return urlunsplit((scheme, netloc, parsed.path, parsed.query, parsed.fragment))
@@ -474,7 +470,7 @@ class BangumiPlugin(Star):  # type: ignore[misc]
             yield await self._result_for_text(event, "❌ 订阅服务未就绪")
             return
 
-        group_id = self._resolve_session_key(event)
+        group_id = self._subscription_session_key(event)
         if not group_id:
             yield await self._result_for_text(event, "❌ 无法获取群组ID")
             return
@@ -509,35 +505,60 @@ class BangumiPlugin(Star):  # type: ignore[misc]
                 f"{index}. {candidate['name']} (ID: {candidate['subject_id']})"
             )
         candidate_lines.append(
-            "5分钟内有效;若发送新的斜杠命令或重新输入 `追番` 将自动取消本次确认"
+            "仅发起人可确认,5分钟内有效;回复“取消”退出,发送新的命令将取消本次确认"
         )
         yield await self._result_for_text(event, "\n".join(candidate_lines))
         session_key = group_id
+        requester_id = event.get_sender_id()
 
-        class GroupSessionFilter(SessionFilter):  # type: ignore[misc]
+        class UserSessionFilter(SessionFilter):  # type: ignore[misc]
             def filter(self, wait_event: AstrMessageEvent) -> str:
-                wait_session_key = BangumiPlugin._resolve_session_key(wait_event)
-                return wait_session_key or wait_event.unified_msg_origin
+                if (
+                    BangumiPlugin._resolve_session_key(wait_event) != session_key
+                    or wait_event.get_sender_id() != requester_id
+                ):
+                    return ""
+                raw_text = wait_event.get_message_str().strip()
+                relevant = (
+                    wait_event is event
+                    or BangumiPlugin._parse_subscribe_selection(raw_text) is not None
+                    or BangumiPlugin._should_requeue_subscribe_command(raw_text)
+                    or raw_text in {"取消", "退出"}
+                )
+                if not relevant:
+                    return ""
+                return json.dumps(
+                    [session_key, requester_id],
+                    ensure_ascii=False,
+                )
 
         @session_waiter(timeout=300)  # type: ignore[untyped-decorator]
         async def subscribe_confirm_waiter(
             controller: SessionController,
             wait_event: AstrMessageEvent,
         ) -> None:
+            if (
+                self._resolve_session_key(wait_event) != session_key
+                or wait_event.get_sender_id() != requester_id
+            ):
+                controller.keep(timeout=0)
+                return
             incoming_text = wait_event.get_message_str().strip()
+            if incoming_text in {"取消", "退出", "/取消"}:
+                await self._send_text(wait_event, "已取消本次追番选择。")
+                controller.stop()
+                return
             if self._should_requeue_subscribe_command(incoming_text):
                 new_event = copy.copy(wait_event)
-                self.context.get_event_queue().put_nowait(new_event)
+                new_event.clear_result()
                 wait_event.stop_event()
                 controller.stop()
+                await asyncio.sleep(0)
+                self.context.get_event_queue().put_nowait(new_event)
                 return
 
             selected_index = self._parse_subscribe_selection(incoming_text)
             if selected_index is None:
-                await self._send_text(
-                    wait_event,
-                    f"❌ {self._format_subscribe_selection_hint(len(candidates))}",
-                )
                 controller.keep(timeout=0)
                 return
             if selected_index < 1 or selected_index > len(candidates):
@@ -560,7 +581,7 @@ class BangumiPlugin(Star):  # type: ignore[misc]
         try:
             await subscribe_confirm_waiter(
                 event,
-                session_filter=GroupSessionFilter(),
+                session_filter=UserSessionFilter(),
             )
         except TimeoutError:
             yield await self._result_for_text(
@@ -576,13 +597,67 @@ class BangumiPlugin(Star):  # type: ignore[misc]
             yield await self._result_for_text(event, "❌ 订阅服务未就绪")
             return
 
-        group_id = self._resolve_session_key(event)
+        group_id = self._subscription_session_key(event)
         if not group_id:
             yield await self._result_for_text(event, "❌ 无法获取群组ID")
             return
 
         result = await self.subscription_service.unsubscribe(group_id, query)
         yield await self._result_for_text(event, result)
+
+    @filter.command("追番列表", alias={"本群追番", "订阅列表"})  # type: ignore[untyped-decorator]
+    async def subscription_list(
+        self, event: AstrMessageEvent
+    ) -> AsyncGenerator[object, None]:
+        if not self.storage or not self.subscription_service:
+            yield event.plain_result("订阅服务未就绪。")
+            return
+        session_key = self._subscription_session_key(event)
+        if not session_key:
+            yield event.plain_result("无法获取当前会话。")
+            return
+        try:
+            subscriptions = self.storage.get_group_subscription_records(session_key)
+        except DatabaseError as exc:
+            logger.error(f"获取追番列表失败: {exc}")
+            yield event.plain_result("查询订阅失败,请稍后重试。")
+            return
+        if not subscriptions:
+            yield event.plain_result(
+                "本会话暂无追番,发送 /追番 番剧名 或 /追番 ID 开始订阅。"
+            )
+            return
+        next_check = "未启动"
+        job_id = getattr(self, "_update_job_id", None)
+        if job_id:
+            job = self.scheduler_manager.scheduler.get_job(job_id)
+            if job and job.next_run_time:
+                next_check = job.next_run_time.strftime("%m-%d %H:%M") + " (UTC+8)"
+        checked_at = self.subscription_service.last_check_at
+        last_check = checked_at.strftime("%m-%d %H:%M") if checked_at else "尚未检查"
+        header = f"本会话追番列表\n上次检查: {last_check}\n下次检查: {next_check}"
+        lines = []
+        for subscription in subscriptions:
+            subject = subscription.subject
+            if subscription.notification_error:
+                status = "通知失败,等待重试"
+            elif subscription.last_notified_episode < subject.current_episode:
+                status = "等待通知"
+            elif not subject.current_episode:
+                status = "等待更新"
+            else:
+                status = "通知已送达"
+            total = str(subject.total_episodes) if subject.total_episodes else "未知"
+            lines.append(
+                f"{subject.name} (ID: {subject.subject_id})\n"
+                f"最新: {subject.current_episode}/{total} 集;已通知: {subscription.last_notified_episode} 集\n"
+                f"状态: {status};放送时间: {subject.broadcast_time or '未设置'}\n"
+                f"取消订阅: /弃坑 {subject.subject_id}"
+            )
+        for start in range(0, len(lines), 10):
+            yield event.plain_result(
+                header + "\n\n" + "\n\n".join(lines[start : start + 10])
+            )
 
     @filter.command("放送时间")  # type: ignore[untyped-decorator]
     async def show_broadcast_time(
@@ -599,7 +674,7 @@ class BangumiPlugin(Star):  # type: ignore[misc]
             yield event.plain_result("❌ 服务未就绪")
             return
 
-        group_id = self._resolve_session_key(event)
+        group_id = self._subscription_session_key(event)
         if not group_id:
             yield event.plain_result("❌ 无法获取群组ID")
             return
@@ -619,7 +694,7 @@ class BangumiPlugin(Star):  # type: ignore[misc]
                 )
                 return
 
-            lines = ["📺 本群已订阅番剧放送时间:"]
+            lines = ["📺 本群已订阅番剧放送时间 (UTC+8,所有群共享;修改需管理员):"]
             for sid in subject_ids:
                 try:
                     bt = self.storage.get_subject_broadcast_time(sid)
@@ -667,24 +742,29 @@ class BangumiPlugin(Star):  # type: ignore[misc]
             if bt:
                 yield event.plain_result(
                     f"📺 《{subject.name}》播出时间: {bt} (CST)\n"
-                    "可发送 `/放送时间 <番剧> HH:MM` 修改"
+                    "所有订阅群共享此时间;仅机器人管理员可修改。"
                 )
             else:
                 yield event.plain_result(
                     f"📺 《{subject.name}》未设定播出时间\n"
                     "将按播出日期当天0点触发通知\n"
-                    "可发送 `/放送时间 <番剧> HH:MM` 设置 (如 22:00)"
+                    "所有订阅群共享此时间;请联系机器人管理员设置。"
                 )
             return
 
         time_str = time.strip()
+        if not event.is_admin():
+            yield event.plain_result(
+                "放送时间对所有订阅群生效,仅机器人管理员可修改或清除。"
+            )
+            return
 
         # 清除
         if time_str in ("清空", "清除", "default"):
             try:
                 self.storage.set_subject_broadcast_time(subject_id, None)
                 yield event.plain_result(
-                    f"✅ 已清除《{subject.name}》的播出时间设置\n将按当天0点触发通知"
+                    f"✅ 已清除《{subject.name}》的播出时间设置,对所有订阅群生效。\n将按当天0点触发通知"
                 )
             except Exception as e:
                 logger.error(f"清除广播时间失败: {e}")
@@ -707,7 +787,7 @@ class BangumiPlugin(Star):  # type: ignore[misc]
             return
         if ok:
             yield event.plain_result(
-                f"✅ 已设置《{subject.name}》播出时间为 {time_str} (CST)"
+                f"✅ 已设置《{subject.name}》播出时间为 {time_str} (CST),对所有订阅群生效。"
             )
         else:
             yield event.plain_result("❌ 设置失败,未找到该番剧记录")

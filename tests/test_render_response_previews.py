@@ -7,7 +7,6 @@ from pathlib import Path
 from types import ModuleType
 
 import pytest
-
 from astrbot_plugin_bangumi.src.render.response_renderer import ResponseRenderer
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -79,6 +78,6 @@ async def test_render_previews_passes_rpc_url(
     )
 
     assert seen_rpc_urls == ["http://127.0.0.1:3000"] * 3
-    assert report["version"] == "v1.5.6"
+    assert report["version"] == "v1.5.7"
     assert report["rpc_url_configured"] is True
     assert (tmp_path / "preview-report-rpc.json").exists()

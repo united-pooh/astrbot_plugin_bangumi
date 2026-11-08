@@ -2,7 +2,6 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-
 from astrbot_plugin_bangumi.src.services import SubscriptionService
 
 
